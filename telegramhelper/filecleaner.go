@@ -55,6 +55,10 @@ func (fc *FileCleaner) Start() error {
 	// Don't require the directory to exist at startup
 	// It will be checked during each cleaning cycle instead
 	fc.isRunning = true
+	// A fresh stop channel per run: Stop closes the channel, so a cleaner
+	// restarted after a Stop would otherwise read from the closed channel
+	// (dropping its loop at once) and panic with a double close on Stop.
+	fc.stopChan = make(chan struct{})
 	fc.wg.Add(1)
 
 	go fc.cleaningLoop()
