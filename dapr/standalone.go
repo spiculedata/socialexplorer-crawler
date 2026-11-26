@@ -242,6 +242,13 @@ func launch(stringList []string, crawlCfg common.CrawlerConfig) {
 // It uses a semaphore pattern to limit concurrency and ensures all pages are processed before returning.
 // This version uses the connection pool for efficient client management.
 func processLayerInParallel(layer *state.Layer, maxWorkers int, sm state.StateManagementInterface, crawlCfg common.CrawlerConfig) {
+	// Defensive guard: make(chan struct{}, 0 or negative) either deadlocks or
+	// panics. A malformed job can carry a bad concurrency value; clamp it so
+	// a single bad job cannot crash the worker.
+	if maxWorkers < 1 {
+		log.Warn().Int("configured_concurrency", maxWorkers).Msg("Invalid concurrency, falling back to 1")
+		maxWorkers = 1
+	}
 	// In dapr mode it's harder to accurately detect this, so we'll simplify the approach
 	// to prevent reprocessing of fetched pages, always skip them
 	isResumingSameCrawlExecution := true

@@ -432,11 +432,11 @@ func GenCode(service TelegramService, storagePrefix string) {
 // authentication steps. It's especially valuable in distributed or containerized environments.
 func downloadAndExtractTarball(url, targetDir string) error {
 	req, err := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-	req.Header.Set("Accept", "*/*")
 	if err != nil {
 		return err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	req.Header.Set("Accept", "*/*")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
