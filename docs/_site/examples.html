@@ -420,7 +420,7 @@ done
 <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
 
 <span class="nv">CRAWL_ID</span><span class="o">=</span><span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span>
-<span class="nv">STORAGE_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">2</span><span class="k">:-</span><span class="p">/tmp/crawl</span><span class="k">}</span><span class="s2">"</span>
+<span class="nv">STORAGE_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">2</span><span class="k">:-</span><span class="p">crawl</span><span class="k">}</span><span class="s2">"</span>
 
 <span class="k">if</span> <span class="o">[</span> <span class="nt">-z</span> <span class="s2">"</span><span class="nv">$CRAWL_ID</span><span class="s2">"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
     </span><span class="nb">echo</span> <span class="s2">"Usage: </span><span class="nv">$0</span><span class="s2"> &lt;crawl-id&gt; [storage-root]"</span>

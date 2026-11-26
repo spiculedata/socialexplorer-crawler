@@ -1,6 +1,8 @@
 package main
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -174,6 +176,26 @@ func TestValidateSamplingMethodDaprJobMode(t *testing.T) {
 	err = validateSamplingMethod("telegram", "channel", []string{}, "", "standalone")
 	if err == nil {
 		t.Errorf("Expected error for channel sampling without URLs in standalone mode")
+	}
+}
+
+// TestStorageRootDefaultNotUnderTmp guards against the storage root default
+// ever landing back under /tmp: the Telegram session database, stored
+// credentials and collected data live there, and a world-scanned temp
+// directory on a shared host would expose them. The default is a relative
+// path ('crawl') inside the working directory instead.
+func TestStorageRootDefaultNotUnderTmp(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("storage-root")
+	if flag == nil {
+		t.Fatal("storage-root flag not registered")
+	}
+
+	cleaned := filepath.Clean(flag.DefValue)
+	if cleaned == "/tmp" || strings.HasPrefix(cleaned, "/tmp/") {
+		t.Errorf("storage-root default %q is under /tmp, which is world-readable on shared hosts", flag.DefValue)
+	}
+	if flag.DefValue != "crawl" {
+		t.Errorf("storage-root default changed to %q; keep it outside /tmp or update this test", flag.DefValue)
 	}
 }
 
