@@ -327,7 +327,7 @@ curl -X POST "http://localhost:3500/v1.0-alpha1/jobs/telegram-scraper" \
     "data": {
       "droid": "advanced-crawl-job",
       "task": "crawl from url file", 
-      "urlFile": "/path/to/channels.txt",
+      "urlFile": "channels.txt",
       "platform": "telegram",
       "crawlId": "bulk-telegram-crawl",
       "maxDepth": 3,
@@ -347,7 +347,7 @@ curl -X POST "http://localhost:3500/v1.0-alpha1/jobs/telegram-scraper" \
 | `droid` | string | Job executor name | ✅ |
 | `task` | string | Task description (must contain "crawl" for crawl jobs) | ✅ |
 | `urls` | []string | List of channel URLs/IDs to crawl | ✅* |
-| `urlFile` | string | Path to file containing URLs (one per line) | ✅* |
+| `urlFile` | string | Seed file containing URLs (one per line); resolved **relative to the fixed seed directory** (`CRAWLER_SEED_DIR`, default `seeds`) | ✅* |
 | `platform` | string | Platform to crawl ("telegram" or "youtube") | ✅ |
 | `crawlId` | string | Custom crawl ID for tracking | ❌ |
 | `maxDepth` | int | Maximum crawl depth | ❌ |
@@ -365,6 +365,7 @@ curl -X POST "http://localhost:3500/v1.0-alpha1/jobs/telegram-scraper" \
 
 **Notes:**
 - *Either `urls` or `urlFile` is required
+- For security, `urlFile` in a job payload is resolved inside the fixed seed directory (override with the `CRAWLER_SEED_DIR` environment variable, default `seeds`): absolute paths and any path containing `..` are rejected. Mount the seed file into that directory instead of naming a host path.
 - **Required when `platform` is "youtube"
 
 #### 4. Job Management
