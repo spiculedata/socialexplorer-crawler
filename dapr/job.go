@@ -564,10 +564,20 @@ func executeCrawlJob(ctx context.Context, jobType string, jobData JobData) error
 	}
 
 	if jobData.URLFile != "" {
-		log.Info().Msgf("📁 Reading URLs from file: %s", jobData.URLFile)
-		fileURLs, err := common2.ReadURLsFromFile(jobData.URLFile)
+		// The job payload names the file; resolve it inside the fixed seed
+		// directory and reject anything that points outside it, so a payload
+		// cannot make the crawler read an arbitrary local file (stored
+		// credentials, service-account tokens, /proc/self/environ) into the
+		// logs, the state store and the crawl's page list.
+		seedFile, err := common2.ResolveSeedFile(jobData.URLFile)
 		if err != nil {
-			log.Error().Err(err).Str("file", jobData.URLFile).Msg("❌ Failed to read URLs from file")
+			log.Error().Err(err).Msg("❌ Rejected seed file named in job payload")
+			return fmt.Errorf("invalid urlFile: %w", err)
+		}
+		log.Info().Msgf("📁 Reading URLs from file: %s", seedFile)
+		fileURLs, err := common2.ReadURLsFromFile(seedFile)
+		if err != nil {
+			log.Error().Err(err).Str("file", seedFile).Msg("❌ Failed to read URLs from file")
 			return fmt.Errorf("failed to read URLs from file: %v", err)
 		}
 		urls = append(urls, fileURLs...)
