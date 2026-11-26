@@ -13,6 +13,12 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// DefaultMaxWorkers is the maximum number of distinct worker IDs the
+// orchestrator will track. The workers map grows on every unknown worker ID in
+// a status message; without a bound, anyone who can publish to the status
+// topic can grow it without limit (memory exhaustion).
+const DefaultMaxWorkers = 100
+
 // Orchestrator manages the distributed crawl workflow
 type Orchestrator struct {
 	crawlID      string
@@ -22,6 +28,7 @@ type Orchestrator struct {
 	
 	// Internal state
 	workers      map[string]*WorkerInfo
+	maxWorkers   int
 	isRunning    bool
 	mu           sync.RWMutex // Protects workers map and other shared state
 	
@@ -92,6 +99,7 @@ func NewOrchestrator(crawlID string, config common.CrawlerConfig) (*Orchestrator
 		stateManager:    sm,
 		pubsub:          pubsub,
 		workers:         make(map[string]*WorkerInfo),
+		maxWorkers:      DefaultMaxWorkers,
 		isRunning:       false,
 		activeWork:      make(map[string]*distributed.WorkItem),
 		completedWork:   make(map[string]*distributed.WorkResult),
@@ -278,8 +286,10 @@ func (o *Orchestrator) distributeWork(ctx context.Context) error {
 
 // createWorkItem creates a work item from a state page
 func (o *Orchestrator) createWorkItem(page *state.Page) distributed.WorkItem {
+	// The work item carries no storage root and no API keys: workers resolve
+	// those from their own configuration, so nothing sensitive is published to
+	// the work-queue topic.
 	config := distributed.WorkItemConfig{
-		StorageRoot:       o.config.StorageRoot,
 		Concurrency:       o.config.Concurrency,
 		Timeout:           o.config.Timeout,
 		MinPostDate:       o.config.MinPostDate,
@@ -294,7 +304,6 @@ func (o *Orchestrator) createWorkItem(page *state.Page) distributed.WorkItem {
 		MinUsers:          o.config.MinUsers,
 		CrawlLabel:        o.config.CrawlLabel,
 		SkipMediaDownload: o.config.SkipMediaDownload,
-		YouTubeAPIKey:     o.config.YouTubeAPIKey,
 		SamplingMethod:    o.config.SamplingMethod,
 		MinChannelVideos:  o.config.MinChannelVideos,
 	}
@@ -420,9 +429,18 @@ func (o *Orchestrator) handleStatusMessage(ctx context.Context, message distribu
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	// Update or create worker info
+	// Update or create worker info, bounding the registry: unknown worker IDs
+	// beyond the cap are ignored so untrusted status messages cannot grow the
+	// map without limit.
 	worker, exists := o.workers[message.WorkerID]
 	if !exists {
+		if len(o.workers) >= o.maxWorkers {
+			log.Warn().
+				Str("worker_id", message.WorkerID).
+				Int("max_workers", o.maxWorkers).
+				Msg("Ignoring status from unknown worker: worker registry is full")
+			return nil
+		}
 		worker = &WorkerInfo{
 			ID: message.WorkerID,
 		}

@@ -61,7 +61,6 @@ func TestCreateWorkItem(t *testing.T) {
 	assert.Equal(t, 1, workItem.Depth)
 	assert.Equal(t, "test-crawl-id", workItem.CrawlID)
 	assert.Equal(t, "telegram", workItem.Platform)
-	assert.Equal(t, orchestrator.config.StorageRoot, workItem.Config.StorageRoot)
 	assert.Equal(t, orchestrator.config.Concurrency, workItem.Config.Concurrency)
 	assert.Equal(t, orchestrator.config.Timeout, workItem.Config.Timeout)
 	assert.Equal(t, orchestrator.config.MaxComments, workItem.Config.MaxComments)

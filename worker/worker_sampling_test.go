@@ -8,6 +8,11 @@ import (
 	"github.com/researchaccelerator-hub/telegram-scraper/distributed"
 )
 
+// workerRoot is the storage root the test workers are configured with; work
+// items no longer carry a storage root, so every converted config must use
+// the worker's own value.
+const workerRoot = "/tmp/worker-root"
+
 func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -18,46 +23,40 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 		{
 			name: "basic sampling configuration",
 			workItemConfig: distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/test",
 				Concurrency:      2,
 				Timeout:          30,
 				SamplingMethod:   "random",
 				MinChannelVideos: 25,
-				YouTubeAPIKey:    "test-api-key",
 			},
 			workerPlatform: "youtube",
 			expectedConfig: common.CrawlerConfig{
-				StorageRoot:      "/tmp/test",
+				StorageRoot:      "/tmp/worker-root",
 				Concurrency:      2,
 				Timeout:          30,
 				Platform:         "youtube",
 				SamplingMethod:   "random",
 				MinChannelVideos: 25,
-				YouTubeAPIKey:    "test-api-key",
 			},
 		},
 		{
 			name: "snowball sampling configuration",
 			workItemConfig: distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/snowball",
 				Concurrency:      4,
 				Timeout:          60,
 				SamplingMethod:   "snowball",
 				MinChannelVideos: 100,
-				YouTubeAPIKey:    "snowball-key",
 				MaxComments:      50,
 				MaxPosts:         200,
 				MaxDepth:         3,
 			},
 			workerPlatform: "youtube",
 			expectedConfig: common.CrawlerConfig{
-				StorageRoot:      "/tmp/snowball",
+				StorageRoot:      "/tmp/worker-root",
 				Concurrency:      4,
 				Timeout:          60,
 				Platform:         "youtube",
 				SamplingMethod:   "snowball",
 				MinChannelVideos: 100,
-				YouTubeAPIKey:    "snowball-key",
 				MaxComments:      50,
 				MaxPosts:         200,
 				MaxDepth:         3,
@@ -66,7 +65,6 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 		{
 			name: "telegram channel sampling",
 			workItemConfig: distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/telegram",
 				Concurrency:      1,
 				Timeout:          45,
 				SamplingMethod:   "channel",
@@ -75,7 +73,7 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 			},
 			workerPlatform: "telegram",
 			expectedConfig: common.CrawlerConfig{
-				StorageRoot:      "/tmp/telegram",
+				StorageRoot:      "/tmp/worker-root",
 				Concurrency:      1,
 				Timeout:          45,
 				Platform:         "telegram",
@@ -87,7 +85,6 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 		{
 			name: "complete configuration with all fields",
 			workItemConfig: distributed.WorkItemConfig{
-				StorageRoot:       "/tmp/complete",
 				Concurrency:       8,
 				Timeout:           90,
 				MinPostDate:       time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -102,13 +99,12 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 				MinUsers:          50,
 				CrawlLabel:        "complete-test",
 				SkipMediaDownload: true,
-				YouTubeAPIKey:     "complete-key",
 				SamplingMethod:    "random",
 				MinChannelVideos:  75,
 			},
 			workerPlatform: "youtube",
 			expectedConfig: common.CrawlerConfig{
-				StorageRoot:       "/tmp/complete",
+				StorageRoot:       "/tmp/worker-root",
 				Concurrency:       8,
 				Timeout:           90,
 				Platform:          "youtube",
@@ -124,7 +120,6 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 				MinUsers:          50,
 				CrawlLabel:        "complete-test",
 				SkipMediaDownload: true,
-				YouTubeAPIKey:     "complete-key",
 				SamplingMethod:    "random",
 				MinChannelVideos:  75,
 			},
@@ -136,7 +131,8 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 			// Create a worker with the specified platform
 			worker := &Worker{
 				config: common.CrawlerConfig{
-					Platform: tt.workerPlatform,
+					Platform:    tt.workerPlatform,
+					StorageRoot: workerRoot,
 				},
 			}
 
@@ -183,13 +179,13 @@ func TestWorkItemConfigToCrawlerConfigSampling(t *testing.T) {
 func TestWorkItemConfigToCrawlerConfigEmptyFields(t *testing.T) {
 	// Test with minimal configuration to ensure defaults are handled correctly
 	workItemConfig := distributed.WorkItemConfig{
-		StorageRoot: "/tmp/minimal",
 		Concurrency: 1,
 	}
 
 	worker := &Worker{
 		config: common.CrawlerConfig{
-			Platform: "youtube",
+			Platform:    "youtube",
+			StorageRoot: workerRoot,
 		},
 	}
 
@@ -215,14 +211,14 @@ func TestWorkItemConfigSamplingMethodValues(t *testing.T) {
 	
 	worker := &Worker{
 		config: common.CrawlerConfig{
-			Platform: "youtube",
+			Platform:    "youtube",
+			StorageRoot: workerRoot,
 		},
 	}
 
 	for _, method := range samplingMethods {
 		t.Run("method_"+method, func(t *testing.T) {
 			workItemConfig := distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/test",
 				SamplingMethod:   method,
 				MinChannelVideos: 30,
 			}
@@ -242,14 +238,14 @@ func TestWorkItemConfigMinChannelVideosTypes(t *testing.T) {
 	
 	worker := &Worker{
 		config: common.CrawlerConfig{
-			Platform: "youtube",
+			Platform:    "youtube",
+			StorageRoot: workerRoot,
 		},
 	}
 
 	for _, value := range testValues {
 		t.Run("min_videos_"+string(rune(value+48)), func(t *testing.T) {
 			workItemConfig := distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/test",
 				MinChannelVideos: value,
 			}
 

@@ -8,5 +8,7 @@ spec:
   metadata:
   - name: rootPath
     value: "/tmp/dapr/crawls"
-
-
+  # Only the crawler's own app IDs may use this binding.
+  scopes:
+  - telegram-scraper
+  - distributed-scheduler

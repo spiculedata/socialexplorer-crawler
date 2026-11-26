@@ -154,7 +154,6 @@ func TestMessageMarshaling(t *testing.T) {
 // Benchmark tests for performance validation
 func BenchmarkNewWorkItem(b *testing.B) {
 	config := WorkItemConfig{
-		StorageRoot: "/tmp/test",
 		Concurrency: 2,
 	}
 

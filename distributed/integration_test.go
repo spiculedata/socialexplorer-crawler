@@ -294,7 +294,6 @@ func TestDistributedWorkflowIntegration(t *testing.T) {
 			"integration-test",
 			"telegram",
 			WorkItemConfig{
-				StorageRoot: "/tmp/test",
 				Concurrency: 1,
 			},
 		)
@@ -321,7 +320,6 @@ func TestDistributedWorkflowIntegration(t *testing.T) {
 			Depth:    0,
 			CrawlID:  "integration-test",
 			Config: WorkItemConfig{
-				StorageRoot: "/tmp/test",
 				Concurrency: 1,
 			},
 			CreatedAt: time.Now(),

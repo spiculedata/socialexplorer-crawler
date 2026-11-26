@@ -65,6 +65,10 @@ sudo make install
 ### Required for YouTube API
 - No environment variable required, but you need to provide the YouTube API key via the `--youtube-api-key` parameter when running the scraper with `--platform youtube`.
 
+### Required for Dapr Redis components
+- **`REDIS_PASSWORD`**: Password for the Redis instance backing the Dapr pub/sub and state store components. The component manifests reference it through `secretKeyRef` from the local env secret store (`components/secretstore.yaml`); the sidecar fails to load the components if it is unset.
+- **`REDIS_ENABLE_TLS`**: Set to `true` when the Redis endpoint uses TLS, `false` otherwise.
+
 ### Optional for Azure Blob Storage
 - **`CONTAINER_NAME`**: Name of the Azure Blob Storage container.
 - **`BLOB_NAME`**: Name of the blob path to store scraped data.
@@ -255,7 +259,7 @@ The scraper supports running in **Dapr Job Mode**, which provides distributed jo
    dapr init
    ```
 
-2. **Environment Variables**: Same requirements as standalone mode (TG_API_*, STORAGE_ROOT, etc.)
+2. **Environment Variables**: Same requirements as standalone mode (TG_API_*, STORAGE_ROOT, etc.) plus the Dapr Redis variables (`REDIS_PASSWORD`, `REDIS_ENABLE_TLS`) required by the component manifests.
 
 ### Running in Dapr Job Mode
 

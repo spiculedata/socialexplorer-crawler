@@ -85,9 +85,13 @@ type WorkItem struct {
 	TraceID     string                 `json:"trace_id,omitempty"`
 }
 
-// WorkItemConfig contains crawl-specific configuration for a work item
+// WorkItemConfig contains crawl-specific configuration for a work item.
+//
+// It deliberately carries no credentials and no filesystem paths: workers take
+// the storage root and any platform API keys from their own local configuration
+// (CLI flags / environment), never from the pub/sub message. Anything in a
+// work item must be safe to publish over the network.
 type WorkItemConfig struct {
-	StorageRoot       string    `json:"storage_root"`
 	Concurrency       int       `json:"concurrency"`
 	Timeout           int       `json:"timeout"`
 	MinPostDate       time.Time `json:"min_post_date,omitempty"`
@@ -102,7 +106,6 @@ type WorkItemConfig struct {
 	MinUsers          int       `json:"min_users"`
 	CrawlLabel        string    `json:"crawl_label,omitempty"`
 	SkipMediaDownload bool      `json:"skip_media_download"`
-	YouTubeAPIKey     string    `json:"youtube_api_key,omitempty"`
 	SamplingMethod    string    `json:"sampling_method,omitempty"`
 	MinChannelVideos  int64     `json:"min_channel_videos,omitempty"`
 }

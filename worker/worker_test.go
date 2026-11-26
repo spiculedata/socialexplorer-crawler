@@ -1,11 +1,13 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/distributed"
@@ -232,12 +234,13 @@ func TestGetStatus(t *testing.T) {
 func TestWorkItemConfigToCrawlerConfig(t *testing.T) {
 	worker := &Worker{
 		config: common.CrawlerConfig{
-			Platform: "telegram",
+			Platform:      "telegram",
+			StorageRoot:   "/worker/root",
+			YouTubeAPIKey: "worker-owned-key",
 		},
 	}
 
 	workConfig := distributed.WorkItemConfig{
-		StorageRoot:       "/tmp/test",
 		Concurrency:       4,
 		Timeout:           60,
 		MaxComments:       100,
@@ -247,12 +250,15 @@ func TestWorkItemConfigToCrawlerConfig(t *testing.T) {
 		MinUsers:          10,
 		CrawlLabel:        "test-crawl",
 		SkipMediaDownload: true,
-		YouTubeAPIKey:     "test-api-key",
 	}
 
 	crawlerConfig := worker.workItemConfigToCrawlerConfig(workConfig)
 
-	assert.Equal(t, workConfig.StorageRoot, crawlerConfig.StorageRoot)
+	// Storage root and API key come from the worker's own configuration,
+	// never from the work item (a pub/sub message must not be able to
+	// redirect storage or inject credentials).
+	assert.Equal(t, worker.config.StorageRoot, crawlerConfig.StorageRoot)
+	assert.Equal(t, worker.config.YouTubeAPIKey, crawlerConfig.YouTubeAPIKey)
 	assert.Equal(t, workConfig.Concurrency, crawlerConfig.Concurrency)
 	assert.Equal(t, workConfig.Timeout, crawlerConfig.Timeout)
 	assert.Equal(t, worker.config.Platform, crawlerConfig.Platform)
@@ -263,7 +269,49 @@ func TestWorkItemConfigToCrawlerConfig(t *testing.T) {
 	assert.Equal(t, workConfig.MinUsers, crawlerConfig.MinUsers)
 	assert.Equal(t, workConfig.CrawlLabel, crawlerConfig.CrawlLabel)
 	assert.Equal(t, workConfig.SkipMediaDownload, crawlerConfig.SkipMediaDownload)
-	assert.Equal(t, workConfig.YouTubeAPIKey, crawlerConfig.YouTubeAPIKey)
+}
+
+// TestWorkItemCannotOverrideWorkerStorageRoot verifies that a work item in the
+// legacy wire format (which used to carry storage_root) cannot change where
+// the worker creates session directories.
+func TestWorkItemCannotOverrideWorkerStorageRoot(t *testing.T) {
+	worker := &Worker{
+		config: common.CrawlerConfig{
+			Platform:    "telegram",
+			StorageRoot: "/worker/root",
+		},
+	}
+
+	// A message from a malicious producer in the old format, with a
+	// storage_root pointing outside the worker's configured root.
+	legacyJSON := `{
+		"message_type": "work_item",
+		"work_item": {
+			"id": "item-1",
+			"url": "https://t.me/test",
+			"depth": 1,
+			"crawl_id": "crawl-1",
+			"platform": "telegram",
+			"config": {
+				"storage_root": "/attacker/chosen/path",
+				"youtube_api_key": "attacker-key",
+				"concurrency": 2
+			}
+		}
+	}`
+
+	var msg distributed.WorkQueueMessage
+	require.NoError(t, json.Unmarshal([]byte(legacyJSON), &msg))
+	require.Equal(t, distributed.MessageTypeWorkItem, msg.MessageType)
+
+	crawlerConfig := worker.workItemConfigToCrawlerConfig(msg.WorkItem.Config)
+
+	// The message's storage_root and API key are ignored: unknown JSON fields
+	// do not decode into WorkItemConfig, and the effective config uses the
+	// worker's own values regardless.
+	assert.Equal(t, "/worker/root", crawlerConfig.StorageRoot)
+	assert.Equal(t, "", crawlerConfig.YouTubeAPIKey)
+	assert.Equal(t, 2, crawlerConfig.Concurrency)
 }
 
 // TestCrawlProcessor tests the crawl processor

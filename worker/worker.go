@@ -388,15 +388,15 @@ func (w *Worker) processTelegramChannel(ctx context.Context, page *state.Page, i
 	// Use the existing connection pool for processing
 	if crawl.IsConnectionPoolInitialized() {
 		log.Debug().Str("url", page.URL).Msg("Using connection pool for Telegram processing")
-		return crawl.RunForChannelWithPool(ctx, page, item.Config.StorageRoot, w.stateManager, crawlCfg)
+		return crawl.RunForChannelWithPool(ctx, page, w.config.StorageRoot, w.stateManager, crawlCfg)
 	} else {
 		// Fallback to creating a single connection
 		log.Debug().Str("url", page.URL).Msg("Creating single connection for Telegram processing")
-		connect, err := crawl.Connect(item.Config.StorageRoot, crawlCfg)
+		connect, err := crawl.Connect(w.config.StorageRoot, crawlCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Telegram connection: %w", err)
 		}
-		return crawl.RunForChannel(connect, page, item.Config.StorageRoot, w.stateManager, crawlCfg)
+		return crawl.RunForChannel(connect, page, w.config.StorageRoot, w.stateManager, crawlCfg)
 	}
 }
 
@@ -407,10 +407,13 @@ func (w *Worker) processYouTubeChannel(ctx context.Context, page *state.Page, it
 	return nil, fmt.Errorf("YouTube processing in distributed mode not yet implemented")
 }
 
-// workItemConfigToCrawlerConfig converts distributed WorkItemConfig to common.CrawlerConfig
+// workItemConfigToCrawlerConfig converts distributed WorkItemConfig to common.CrawlerConfig.
+// The storage root and any platform API keys always come from the worker's own
+// configuration, never from the work item: a message cannot redirect where
+// session directories are created or inject credentials.
 func (w *Worker) workItemConfigToCrawlerConfig(config distributed.WorkItemConfig) common.CrawlerConfig {
 	return common.CrawlerConfig{
-		StorageRoot:       config.StorageRoot,
+		StorageRoot:       w.config.StorageRoot,
 		Concurrency:       config.Concurrency,
 		Timeout:           config.Timeout,
 		Platform:          w.config.Platform,
@@ -426,7 +429,7 @@ func (w *Worker) workItemConfigToCrawlerConfig(config distributed.WorkItemConfig
 		MinUsers:          config.MinUsers,
 		CrawlLabel:        config.CrawlLabel,
 		SkipMediaDownload: config.SkipMediaDownload,
-		YouTubeAPIKey:     config.YouTubeAPIKey,
+		YouTubeAPIKey:     w.config.YouTubeAPIKey,
 		SamplingMethod:    config.SamplingMethod,
 		MinChannelVideos:  config.MinChannelVideos,
 	}
