@@ -65,6 +65,13 @@ type StateManagementInterface interface {
 	// Returns executionID, exists flag, and any error
 	FindIncompleteCrawl(crawlID string) (string, bool, error)
 
+	// GetCrawlOwner returns the name of the scheduler job that most recently
+	// recorded the crawl as active, or an empty string when the crawl has no
+	// recorded owner (no active entry, or a legacy entry written before
+	// ownership was tracked). The job launcher uses it to refuse a job from
+	// starting a crawl against another job's crawl ID.
+	GetCrawlOwner(crawlID string) (string, error)
+
 	// Media cache
 	// HasProcessedMedia checks if a media item has already been processed
 	// Used to avoid duplicate downloads and storage
@@ -128,6 +135,12 @@ type Config struct {
 	// Crawl identifiers
 	// CrawlID identifies a logical crawl operation across runs
 	CrawlID string
+
+	// JobName identifies the scheduler job that launched the crawl, when the
+	// crawler runs in Dapr job mode. It is recorded as the crawl's owner so a
+	// later job reusing the same crawl ID can be refused. Empty for manual
+	// (CLI) runs.
+	JobName string
 
 	// CrawlExecutionID identifies a specific execution instance
 	// This allows for multiple executions of the same logical crawl

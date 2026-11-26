@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	daprc "github.com/dapr/go-sdk/client"
+	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/model"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
@@ -88,6 +89,19 @@ func GetEnvValue(key, fallback string) string {
 //   - A fully initialized DaprStateManager ready to manage crawler state
 //   - An error if initialization fails (e.g., Dapr client creation fails)
 func NewDaprStateManager(config Config) (*DaprStateManager, error) {
+	// Refuse crawl identifiers that could escape the crawl's own namespace in
+	// storage paths or state keys ("crawlID/metadata", "crawlID/layer_map",
+	// "active_crawl/crawlID", binding file names). An empty crawl ID is
+	// tolerated for callers that do not track a crawl (legacy behaviour).
+	if config.CrawlID != "" {
+		if err := common.ValidateCrawlID(config.CrawlID); err != nil {
+			return nil, fmt.Errorf("refusing to create Dapr state manager: %w", err)
+		}
+	}
+	if err := common.ValidateCrawlExecutionID(config.CrawlExecutionID); err != nil {
+		return nil, fmt.Errorf("refusing to create Dapr state manager: %w", err)
+	}
+
 	base := NewBaseStateManager(config)
 
 	// Create Dapr client with custom message size
@@ -956,10 +970,25 @@ func (dsm *DaprStateManager) SaveState() error {
 		return nil // Non-critical, continue even if it fails
 	})
 
-	// 3. Save active crawl indicator
+	// 3. Save active crawl indicator. The entry also records which scheduler
+	// job owns the crawl, so a later job reusing this crawl ID can be refused
+	// (see GetCrawlOwner).
 	activeKey := fmt.Sprintf("active_crawl/%s", dsm.config.CrawlID)
-	activeData := []byte(fmt.Sprintf(`{"crawl_id":"%s","execution_id":"%s","timestamp":"%s"}`,
-		dsm.config.CrawlID, dsm.config.CrawlExecutionID, time.Now().Format(time.RFC3339)))
+	activeData, err := json.Marshal(struct {
+		CrawlID     string `json:"crawl_id"`
+		ExecutionID string `json:"execution_id"`
+		Timestamp   string `json:"timestamp"`
+		JobName     string `json:"job_name,omitempty"`
+	}{
+		CrawlID:     dsm.config.CrawlID,
+		ExecutionID: dsm.config.CrawlExecutionID,
+		Timestamp:   time.Now().Format(time.RFC3339),
+		JobName:     dsm.config.JobName,
+	})
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to marshal active crawl indicator")
+		activeData = []byte("{}")
+	}
 
 	eg.Go(func() error {
 		err := (*dsm.client).SaveState(ctx, dsm.stateStoreName, activeKey, activeData, nil)
@@ -985,6 +1014,15 @@ func (dsm *DaprStateManager) StorePost(channelID string, post model.Post) error 
 	// post data is not necessary for random-walk crawls
 	if dsm.BaseStateManager.config.SamplingMethod == "random-walk" {
 		return nil
+	}
+
+	// The channel ID and post UID become path segments under the crawl's
+	// storage directory; refuse identifiers that could escape it.
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return fmt.Errorf("refusing to store post: %w", err)
+	}
+	if err := common.ValidateChannelName(post.PostUID); err != nil {
+		return fmt.Errorf("refusing to store post: %w", err)
 	}
 
 	postData, err := json.Marshal(post)
@@ -1054,6 +1092,12 @@ func (dsm *DaprStateManager) StoreFile(crawlId string, sourceFilePath string, fi
 		if ext != "" && !strings.HasSuffix(fileName, ext) {
 			fileName = fileName + ext
 		}
+	}
+
+	// The file name becomes a path segment under the crawl's media directory;
+	// refuse a caller-supplied name that could escape it.
+	if err := common.ValidateChannelName(fileName); err != nil {
+		return "", sourceFilePath, fmt.Errorf("refusing to store file: %w", err)
 	}
 
 	// Create storage path for media
@@ -1545,6 +1589,42 @@ func (dsm *DaprStateManager) Close() error {
 
 	log.Info().Msg("Media cache successfully saved during shutdown")
 	return nil
+}
+
+// GetCrawlOwner returns the name of the scheduler job that most recently
+// recorded the crawl as active in the Dapr state store, or an empty string
+// when the crawl has no recorded owner (no active_crawl entry, or a legacy
+// entry written before ownership was tracked). The job launcher uses it to
+// refuse a job from starting a crawl against another job's crawl ID.
+func (dsm *DaprStateManager) GetCrawlOwner(crawlID string) (string, error) {
+	// The crawl ID is used verbatim as a state-key segment; refuse IDs that
+	// could address another entry.
+	if err := common.ValidateCrawlID(crawlID); err != nil {
+		return "", err
+	}
+
+	response, err := (*dsm.client).GetState(
+		context.Background(),
+		dsm.stateStoreName,
+		fmt.Sprintf("active_crawl/%s", crawlID),
+		nil,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to read active crawl indicator: %w", err)
+	}
+	if response.Value == nil {
+		return "", nil
+	}
+
+	var activeData struct {
+		JobName string `json:"job_name"`
+	}
+	if err := json.Unmarshal(response.Value, &activeData); err != nil {
+		// Unparsable (legacy) entries carry no ownership information.
+		log.Debug().Err(err).Str("crawlID", crawlID).Msg("Could not parse active crawl indicator as JSON; treating crawl as unowned")
+		return "", nil
+	}
+	return activeData.JobName, nil
 }
 
 // FindIncompleteCrawl looks for an incomplete crawl with the given crawl ID
@@ -2516,6 +2596,9 @@ func (dsm *DaprStateManager) saveMediaCacheShard(shard *MediaCache) error {
 
 // generateStoragePath creates a standardized storage path
 func (dsm *DaprStateManager) generateStoragePath(channelID, subPath string) (string, error) {
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return "", fmt.Errorf("refusing to build storage path: %w", err)
+	}
 	return fmt.Sprintf(
 		"%s/%s/%s/%s",
 		dsm.config.StorageRoot,
@@ -2526,7 +2609,7 @@ func (dsm *DaprStateManager) generateStoragePath(channelID, subPath string) (str
 }
 
 func (dsm *DaprStateManager) generateCrawlLevelStoragePath(subPath string) (string, error) {
-	return fmt.Sprintf(
+	return fmt.Sprintf( // subPath is built internally; the crawl ID is validated at construction
 		"%s/%s/%s",
 		dsm.config.StorageRoot,
 		dsm.config.CrawlID,
@@ -2536,6 +2619,9 @@ func (dsm *DaprStateManager) generateCrawlLevelStoragePath(subPath string) (stri
 
 // generateStoragePath creates a standardized storage path
 func (dsm *DaprStateManager) generateCrawlExecutableStoragePath(channelID, subPath string) (string, error) {
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return "", fmt.Errorf("refusing to build storage path: %w", err)
+	}
 	return fmt.Sprintf(
 		"%s/%s/%s/%s/%s",
 		dsm.config.StorageRoot,
@@ -2892,6 +2978,12 @@ func (dsm *DaprStateManager) AddDiscoveredChannel(channelID string) error {
 }
 
 func (dsm *DaprStateManager) StoreChannelData(channelID string, channelData *model.ChannelData) error {
+	// The channel ID becomes a path segment under the crawl's storage
+	// directory; refuse identifiers that could escape it.
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return fmt.Errorf("random-walk-channel-info: refusing to store channel data: %w", err)
+	}
+
 	channelJSON, err := json.Marshal(channelData)
 	if err != nil {
 		return fmt.Errorf("random-walk-channel-info: failed to marshall channel data: %w", err)

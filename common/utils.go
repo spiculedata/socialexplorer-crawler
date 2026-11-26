@@ -31,6 +31,7 @@ type CrawlerConfig struct {
 	DaprJobMode       bool
 	MinUsers          int
 	CrawlID           string
+	JobName           string // Scheduler job name that launched the crawl (Dapr job mode); recorded as the crawl's owner
 	CrawlLabel        string // User-defined label for the crawl (e.g., "youtube-snowball")
 	MaxComments       int
 	MaxPosts          int

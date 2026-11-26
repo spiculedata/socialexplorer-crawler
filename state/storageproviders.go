@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/model"
 	"github.com/rs/zerolog/log"
 )
@@ -82,6 +83,18 @@ type LocalStateManager struct {
 
 // NewLocalStateManager creates a new local filesystem-backed state manager
 func NewLocalStateManager(config Config) (*LocalStateManager, error) {
+	// Refuse crawl identifiers that could escape the crawl's own directory
+	// under the base path. An empty crawl ID is tolerated for callers that do
+	// not track a crawl (legacy behaviour).
+	if config.CrawlID != "" {
+		if err := common.ValidateCrawlID(config.CrawlID); err != nil {
+			return nil, fmt.Errorf("refusing to create local state manager: %w", err)
+		}
+	}
+	if err := common.ValidateCrawlExecutionID(config.CrawlExecutionID); err != nil {
+		return nil, fmt.Errorf("refusing to create local state manager: %w", err)
+	}
+
 	base := NewBaseStateManager(config)
 
 	// Ensure a valid base path is provided
@@ -196,6 +209,12 @@ func (lsm *LocalStateManager) SaveState() error {
 
 // StorePost saves a post to the filesystem
 func (lsm *LocalStateManager) StorePost(channelID string, post model.Post) error {
+	// The channel ID becomes a directory under the crawl's storage directory;
+	// refuse identifiers that could escape it.
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return fmt.Errorf("refusing to store post: %w", err)
+	}
+
 	postData, err := json.Marshal(post)
 	if err != nil {
 		return fmt.Errorf("failed to marshal post: %w", err)
@@ -242,6 +261,15 @@ func (lsm *LocalStateManager) StoreFile(channelID string, sourceFilePath string,
 		if ext != "" && !strings.HasSuffix(fileName, ext) {
 			fileName = fileName + ext
 		}
+	}
+
+	// The channel ID and file name become path segments under the crawl's
+	// media directory; refuse identifiers that could escape it.
+	if err := common.ValidateChannelName(channelID); err != nil {
+		return "", "", fmt.Errorf("refusing to store file: %w", err)
+	}
+	if err := common.ValidateChannelName(fileName); err != nil {
+		return "", "", fmt.Errorf("refusing to store file: %w", err)
 	}
 
 	// Create media directory
@@ -406,6 +434,14 @@ func (lsm *LocalStateManager) UpdateCrawlMetadata(crawlID string, metadata map[s
 	}
 
 	return nil
+}
+
+// GetCrawlOwner reports that local state has no recorded crawl owner: the
+// local filesystem backend is not scheduler-driven, so no job has ever
+// claimed the crawl. This keeps the ownership check (see GetCrawlOwner in
+// StateManagementInterface) permissive for local mode.
+func (lsm *LocalStateManager) GetCrawlOwner(crawlID string) (string, error) {
+	return "", nil
 }
 
 // FindIncompleteCrawl checks for incomplete crawls

@@ -95,6 +95,7 @@ func (m *MockDaprStateManager) SaveState() error {
 }
 
 // Implement other required methods of StateManagementInterface
+func (m *MockDaprStateManager) GetCrawlOwner(crawlID string) (string, error) { return "", nil }
 func (m *MockDaprStateManager) StorePost(channelID string, post model.Post) error {
 	// Call InvokeBinding to simulate storing a post
 	m.client.InvokeBinding(mock.Anything, mock.Anything)
@@ -248,6 +249,11 @@ func (m *MockStateManager) GetLayerByDepth(depth int) ([]state.Page, error) {
 func (m *MockStateManager) SaveState() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockStateManager) GetCrawlOwner(crawlID string) (string, error) {
+	args := m.Called(crawlID)
+	return args.String(0), args.Error(1)
 }
 
 func (m *MockStateManager) StorePost(channelID string, post model.Post) error {

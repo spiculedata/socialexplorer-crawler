@@ -315,6 +315,9 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 	if jobData.CrawlID != "" {
 		mergedConfig.CrawlID = jobData.CrawlID
 	}
+	if jobData.JobName != "" {
+		mergedConfig.JobName = jobData.JobName
+	}
 	if jobData.Platform != "" {
 		mergedConfig.Platform = jobData.Platform
 	}
@@ -552,6 +555,14 @@ func executeCrawlJob(ctx context.Context, jobType string, jobData JobData) error
 		log.Info().Msgf("✅ Using provided crawl ID: %s", crawlerCfg.CrawlID)
 	}
 
+	// The crawl ID becomes path segments and state keys ("crawlID/metadata",
+	// "crawlID/layer_map", "active_crawl/crawlID", binding file names); refuse
+	// a job-supplied ID that could write into another crawl's namespace.
+	if err := common2.ValidateCrawlID(crawlerCfg.CrawlID); err != nil {
+		log.Error().Err(err).Msg("❌ Refusing to start crawl with invalid crawl ID")
+		return err
+	}
+
 	// Step 5: URL collection and validation
 	log.Info().Msg("📄 Step 5: URL collection and validation...")
 	var urls []string
@@ -759,6 +770,7 @@ func launchCrawl(stringList []string, crawlCfg common2.CrawlerConfig) error {
 		CrawlExecutionID: crawlexecid,
 		Platform:         crawlCfg.Platform, // Pass the platform information
 		SamplingMethod:   crawlCfg.SamplingMethod,
+		JobName:          crawlCfg.JobName,
 	}
 
 	smfact := state.DefaultStateManagerFactory{}
@@ -770,6 +782,20 @@ func launchCrawl(stringList []string, crawlCfg common2.CrawlerConfig) error {
 			Str("platform", cfg.Platform).
 			Msg("❌ CRITICAL: Failed to initialize state manager")
 		return fmt.Errorf("state manager initialization failed: %w", err)
+	}
+
+	// A crawl ID supplied by the scheduler may belong to another job: refuse
+	// to start against state that a different job most recently owned, rather
+	// than overwriting its resume state. Entries written before ownership was
+	// recorded, and runs without a job name (manual resumes), are allowed.
+	owner, ownerErr := sm.GetCrawlOwner(cfg.CrawlID)
+	if ownerErr != nil {
+		log.Warn().Err(ownerErr).Str("crawl_id", cfg.CrawlID).Msg("Could not read the crawl owner; continuing without the ownership check")
+	} else if err := common2.CheckCrawlOwnership(owner, cfg.JobName); err != nil {
+		log.Error().Err(err).Str("crawl_id", cfg.CrawlID).Str("owner", owner).Str("job", cfg.JobName).Msg("❌ Refusing to reuse another job's crawl ID")
+		return err
+	} else if owner != "" && cfg.JobName == "" {
+		log.Warn().Str("crawl_id", cfg.CrawlID).Str("owner", owner).Msg("Crawl state was last owned by a scheduler job; allowing the manual run to resume it")
 	}
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix

@@ -59,6 +59,12 @@ type WorkerInfo struct {
 func NewOrchestrator(crawlID string, config common.CrawlerConfig) (*Orchestrator, error) {
 	log.Info().Str("crawl_id", crawlID).Msg("Creating new orchestrator instance")
 
+	// The crawl ID becomes path segments and state keys for the whole crawl;
+	// refuse one that could write into another crawl's namespace.
+	if err := common.ValidateCrawlID(crawlID); err != nil {
+		return nil, err
+	}
+
 	// Create state manager for this crawl
 	smFactory := state.NewStateManagerFactory()
 	cfg := state.Config{

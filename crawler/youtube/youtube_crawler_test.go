@@ -62,6 +62,7 @@ func (m *MockYouTubeStateManager) GetLayerByDepth(depth int) ([]state.Page, erro
 func (m *MockYouTubeStateManager) GetMaxDepth() (int, error)                         { return 0, nil }
 func (m *MockYouTubeStateManager) SaveState() error                                  { return nil }
 func (m *MockYouTubeStateManager) ExportPagesToBinding(crawlID string) error         { return nil }
+func (m *MockYouTubeStateManager) GetCrawlOwner(crawlID string) (string, error) { return "", nil }
 func (m *MockYouTubeStateManager) StorePost(channelID string, post model.Post) error { return nil }
 func (m *MockYouTubeStateManager) StoreFile(channelID string, sourceFilePath string, fileName string) (string, string, error) {
 	return "", "", nil
