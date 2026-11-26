@@ -76,6 +76,23 @@ sudo make install
 - **`MAX_MESSAGES`**: Maximum number of messages to scrape per channel (default: all messages).
 - **`LOG_LEVEL`**: Logging level (default: "info", options: "debug", "info", "warn", "error").
 
+### Dapr app API token (recommended when running with `--dapr`)
+- **`APP_API_TOKEN`**: Shared secret between the Dapr sidecar and the crawler's
+  app server. When set, the sidecar attaches it to service invocations it
+  forwards to the app (as the `dapr-api-token` HTTP header / gRPC metadata
+  key), and the crawler rejects invocations that do not carry it. Set the same
+  value on both the sidecar and the crawler (in Kubernetes, set
+  `dapr.io/app-token-secret` on the app deployment and the
+  `DAPR_API_TOKEN` env var on the sidecar container). Without it, the app
+  servers rely on their loopback binding for protection.
+
+### Profiling server (off by default)
+The `/debug/pprof` endpoints are disabled by default. Start them with
+`--pprof` (bound to `--pprof-addr`, default `127.0.0.1:6060`). Never expose
+the profiling server beyond loopback: `/debug/pprof/cmdline` echoes the
+command line (which may include API keys) and `/debug/pprof/profile` and
+`/debug/pprof/trace` allow unauthenticated CPU-burn denial of service.
+
 ---
 
 ## Directory Structure

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/researchaccelerator-hub/telegram-scraper/telegramhelper"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -67,13 +69,22 @@ func StartDaprMode(crawlerCfg common2.CrawlerConfig) {
 	}
 	log.Info().Msg("📦 Application state initialized with base configuration")
 
-	// Create a new Dapr service
-	port := fmt.Sprintf(":%d", crawlerCfg.DaprPort)
-	log.Info().Msgf("🌐 Creating DAPR gRPC service on port %s", port)
-	server, err := daprs.NewService(port)
+	// Create a new Dapr service, bound to the loopback interface only: the
+	// Dapr sidecar shares this process's network namespace, so it can still
+	// reach the app on 127.0.0.1, while remote peers cannot connect directly
+	// and drive the crawler, bypassing Dapr and the web app's authentication.
+	port := fmt.Sprintf("127.0.0.1:%d", crawlerCfg.DaprPort)
+	log.Info().Msgf("🌐 Creating DAPR gRPC service on %s (loopback only)", port)
+	lis, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatal().Err(err).Msg("❌ Failed to start DAPR gRPC server")
+		log.Fatal().Err(err).Msgf("❌ Failed to bind DAPR gRPC server to %s", port)
 	}
+	server := daprs.NewServiceWithListener(
+		lis,
+		grpc.ChainUnaryInterceptor(AppAPITokenUnaryInterceptor()),
+		grpc.ChainStreamInterceptor(AppAPITokenStreamInterceptor()),
+	)
+	WarnIfNoAppAPIToken()
 	log.Info().Msg("✅ DAPR gRPC service created successfully")
 
 	// Creates handlers for the service
