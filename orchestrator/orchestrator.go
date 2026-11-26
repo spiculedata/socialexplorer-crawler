@@ -80,8 +80,9 @@ func NewOrchestrator(crawlID string, config common.CrawlerConfig) (*Orchestrator
 		return nil, fmt.Errorf("failed to create state manager: %w", err)
 	}
 
-	// Create PubSub client
-	pubsub, err := distributed.NewPubSubClient("pubsub", fmt.Sprintf(":%d", config.DaprPort))
+	// Create PubSub client (app server bound to loopback; the Dapr sidecar
+	// shares the network namespace)
+	pubsub, err := distributed.NewPubSubClient("pubsub", fmt.Sprintf("127.0.0.1:%d", config.DaprPort))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PubSub client: %w", err)
 	}

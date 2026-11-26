@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	daprc "github.com/dapr/go-sdk/client"
 	"github.com/dapr/go-sdk/service/common"
 	daprs "github.com/dapr/go-sdk/service/grpc"
+	"github.com/researchaccelerator-hub/telegram-scraper/dapr"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc"
 )
 
 // PubSubClient provides an abstraction over Dapr PubSub functionality
@@ -260,10 +263,19 @@ func (p *PubSubClient) StartServer(ctx context.Context) error {
 		return nil
 	}
 
-	server, err := daprs.NewService(p.appPort)
+	// Bind the app server to the loopback interface only: the Dapr sidecar
+	// shares this process's network namespace, while remote peers must go
+	// through Dapr rather than hitting the app directly.
+	lis, err := net.Listen("tcp", p.appPort)
 	if err != nil {
-		return fmt.Errorf("failed to create Dapr service: %w", err)
+		return fmt.Errorf("failed to bind Dapr service to %s: %w", p.appPort, err)
 	}
+
+	server := daprs.NewServiceWithListener(
+		lis,
+		grpc.ChainUnaryInterceptor(dapr.AppAPITokenUnaryInterceptor()),
+		grpc.ChainStreamInterceptor(dapr.AppAPITokenStreamInterceptor()),
+	)
 
 	// Register all subscriptions
 	for topic, handler := range p.subscriptions {

@@ -37,6 +37,8 @@ var (
 	minUsers          int
 	crawlID           string
 	crawlLabel        string   // User-provided label for the crawl
+	pprofEnabled      bool     // Whether the /debug/pprof profiling server is enabled
+	pprofAddr         string   // Address the profiling server binds to
 	timeAgo           string   // Time ago parameter
 	dateBetween       string   // Date range in format "YYYY-MM-DD,YYYY-MM-DD"
 	sampleSize        int      // Number of posts to randomly sample when using date-between
@@ -52,29 +54,33 @@ func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 
-	// TODO: Remove after identifying memory leak
+	// Profiling server: disabled by default. /debug/pprof must never listen
+	// on a non-loopback address by default: /debug/pprof/cmdline echoes the
+	// command line (which may include API keys), and /profile and /trace
+	// allow unauthenticated CPU-burn denial of service.
+	if pprofEnabled {
+		mux := http.NewServeMux()
 
-	mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		log.Info().Msgf("Starting profiling server on %s", pprofAddr)
+		log.Info().Msgf("Profiling endpoints are available at http://%s/debug/pprof/", pprofAddr)
 
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	log.Info().Msg("Starting server on :6060")
-	log.Info().Msg("Profiling endpoints are available at http://localhost:6060/debug/pprof/")
-
-	server := &http.Server{
-		Addr:    ":6060",
-		Handler: mux,
-	}
-
-	// Start the HTTP server.
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			log.Error().Msgf("Could not start server: %s\n", err)
+		server := &http.Server{
+			Addr:    pprofAddr,
+			Handler: mux,
 		}
-	}()
+
+		// Start the HTTP server.
+		go func() {
+			if err := server.ListenAndServe(); err != nil {
+				log.Error().Msgf("Could not start profiling server: %s\n", err)
+			}
+		}()
+	}
 
 	// Initialize and execute the root command
 	if err := rootCmd.Execute(); err != nil {
@@ -713,6 +719,8 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "debug", "Log level (trace, debug, info, warn, error, fatal, panic)")
+	rootCmd.PersistentFlags().BoolVar(&pprofEnabled, "pprof", false, "enable the /debug/pprof profiling server (binds to --pprof-addr, loopback by default)")
+	rootCmd.PersistentFlags().StringVar(&pprofAddr, "pprof-addr", "127.0.0.1:6060", "address for the /debug/pprof profiling server to bind to")
 	rootCmd.PersistentFlags().BoolVar(&crawlerCfg.DaprMode, "dapr", false, "run with DAPR enabled")
 	rootCmd.PersistentFlags().StringVar(&daprMode, "dapr-mode", "job", "DAPR mode to use ('job' or 'standalone')")
 	rootCmd.PersistentFlags().IntVar(&crawlerCfg.DaprPort, "dapr-port", 6481, "DAPR port to use")

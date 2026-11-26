@@ -26,7 +26,7 @@ require (
 	github.com/bluesky-social/indigo v0.0.0-20251009212240-20524de167fe // indirect
 	github.com/bluesky-social/jetstream v0.0.0-20251009222037-7d7efa58d7f1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/dapr/dapr v1.14.0 // indirect
+	github.com/dapr/dapr v1.14.0
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect

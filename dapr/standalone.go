@@ -23,6 +23,16 @@ import (
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	// When APP_API_TOKEN is set, reject calls that do not carry it. The Dapr
+	// HTTP app channel attaches the token to every call it makes to the app,
+	// including health checks, so legitimate sidecar traffic still passes.
+	if token := os.Getenv(AppAPITokenEnvVar); token != "" {
+		if r.Header.Get(AppAPITokenMetadataKey) != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("missing or invalid app API token\n"))
+			return
+		}
+	}
 	fmt.Fprintf(w, "Hello, World!")
 }
 
@@ -54,8 +64,15 @@ func StartDaprStandaloneMode(urlList []string, urlFile string, crawlerCfg common
 	log.Info().Msg("Starting crawler in standalone mode")
 
 	http.HandleFunc("/", handler)
+	// Bind to the loopback interface only: the Dapr sidecar shares this
+	// process's network namespace, while remote peers must go through Dapr
+	// and its APP_API_TOKEN check.
 	go func() {
-		if err := http.ListenAndServe(":6481", nil); err != nil {
+		server := &http.Server{
+			Addr:    fmt.Sprintf("127.0.0.1:%d", crawlerCfg.DaprPort),
+			Handler: http.DefaultServeMux,
+		}
+		if err := server.ListenAndServe(); err != nil {
 			// Log the error and exit the application if the server fails to start
 			fmt.Printf("Failed to start server: %v\n", err)
 			return
