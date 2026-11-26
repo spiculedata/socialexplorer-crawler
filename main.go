@@ -720,7 +720,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&crawlerCfg.Timeout, "timeout", 30, "HTTP request timeout in seconds")
 	rootCmd.PersistentFlags().StringVar(&crawlerCfg.UserAgent, "user-agent", "Mozilla/5.0 Crawler", "User agent to use")
 	rootCmd.PersistentFlags().StringVar(&crawlerCfg.OutputFormat, "output", "json", "Output format (json, csv, etc.)")
-	rootCmd.PersistentFlags().StringVar(&crawlerCfg.StorageRoot, "storage-root", "/tmp/crawl", "Storage root directory")
+	rootCmd.PersistentFlags().StringVar(&crawlerCfg.StorageRoot, "storage-root", "crawl", "Storage root directory (relative to the working directory unless an absolute path is given)")
 	rootCmd.PersistentFlags().StringVar(&minPostDate, "min-post-date", "", "Minimum post date to crawl (format: YYYY-MM-DD)")
 	rootCmd.PersistentFlags().StringVar(&timeAgo, "time-ago", "", "Only consider posts newer than this time ago (e.g., '30d' for 30 days, '6h' for 6 hours, '2w' for 2 weeks, '1m' for 1 month, '1y' for 1 year)")
 	rootCmd.PersistentFlags().StringVar(&dateBetween, "date-between", "", "Date range to crawl posts between (format: YYYY-MM-DD,YYYY-MM-DD)")

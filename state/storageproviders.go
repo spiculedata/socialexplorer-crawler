@@ -30,19 +30,19 @@ func (p *LocalStorageProvider) ReadFile(path string) ([]byte, error) {
 
 func (p *LocalStorageProvider) WriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func (p *LocalStorageProvider) AppendToFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (p *LocalStorageProvider) AppendToFile(path string, data []byte) error {
 }
 
 func (p *LocalStorageProvider) CreateDir(path string) error {
-	return os.MkdirAll(path, os.ModePerm)
+	return os.MkdirAll(path, 0700)
 }
 
 func (p *LocalStorageProvider) FileExists(path string) (bool, error) {

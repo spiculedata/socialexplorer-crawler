@@ -368,7 +368,7 @@ Create `monitor-crawl.sh`:
 #!/bin/bash
 
 CRAWL_ID="$1"
-STORAGE_ROOT="${2:-/tmp/crawl}"
+STORAGE_ROOT="${2:-crawl}"
 
 if [ -z "$CRAWL_ID" ]; then
     echo "Usage: $0 <crawl-id> [storage-root]"

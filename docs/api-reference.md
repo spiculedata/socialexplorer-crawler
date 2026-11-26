@@ -125,7 +125,7 @@ Randomly sample this many posts when using `--date-between`.
 
 #### Storage Configuration
 
-**`--storage-root`** *(string)* • *Default: `/tmp/crawl`*  
+**`--storage-root`** *(string)* • *Default: `crawl`*  
 Root directory for storing crawled data and progress files.
 
 *Example:* `--storage-root "/data/crawls"`
@@ -251,7 +251,7 @@ Override the default logging level.
 *Options:* `trace` | `debug` | `info` | `warn` | `error`  
 *Example:* `export CRAWLER_LOGGING_LEVEL="info"`
 
-**`CRAWLER_STORAGE_ROOT`** • *Default: `/tmp/crawl`*  
+**`CRAWLER_STORAGE_ROOT`** • *Default: `crawl`*  
 Override the default storage directory.
 
 *Example:* `export CRAWLER_STORAGE_ROOT="/data/crawls"`

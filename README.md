@@ -118,7 +118,7 @@ Options:
   --url-file string              File containing URLs to crawl (one per line)
   --crawl-id string              Specify a custom crawl ID for tracking (default: auto-generated)
   --crawl-label string           User-defined label for the crawl (e.g., "youtube-snowball")
-  --storage-root string          Directory for storing data locally (default: "/tmp/crawl")
+  --storage-root string          Directory for storing data locally (default: "crawl")
   --max-posts int                Maximum number of posts to collect per channel (default: all)
   --max-comments int             Maximum number of comments to crawl per post (default: all)
   --max-depth int                Maximum depth of the crawl (default: all)

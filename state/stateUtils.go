@@ -109,7 +109,7 @@ func generateStandardSharedStorageLocation(storageroot string, crawlid string, f
 
 	if local {
 		path := filepath.Join(storageroot, crawlid, foldername)
-		if err := os.MkdirAll(path, 0755); err != nil {
+		if err := os.MkdirAll(path, 0700); err != nil {
 			log.Error().
 				Err(err).
 				Str("path", path).
@@ -144,7 +144,7 @@ func generateStandardStorageLocation(storageroot string, crawlid string, crawlex
 
 	if local {
 		path := filepath.Join(storageroot, crawlid, crawlexecutionid, channelname)
-		if err := os.MkdirAll(path, 0755); err != nil {
+		if err := os.MkdirAll(path, 0700); err != nil {
 			log.Error().
 				Err(err).
 				Str("path", path).
@@ -179,7 +179,7 @@ func generateStandardStorageLocationForChannels(storageroot string, crawlid stri
 
 	if local {
 		path := filepath.Join(storageroot, crawlid, crawlexecutionid, channelname)
-		if err := os.MkdirAll(path, 0755); err != nil {
+		if err := os.MkdirAll(path, 0700); err != nil {
 			log.Error().
 				Err(err).
 				Str("path", path).
