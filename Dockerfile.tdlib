@@ -1,10 +1,11 @@
-FROM alpine:3.21
+# TDLib build image for the crawler.
+# Alpine base is pinned by digest (multi-arch index for alpine:3.21).
+FROM alpine:3.21@sha256:bc21487101ae47172509130ee1092cc273a831968d64b617776d1f69c81e42ab
 
-WORKDIR /
+RUN apk add --no-cache ca-certificates
 
-RUN apk add --no-cache \
-        ca-certificates
-
+# Build TDLib, then drop the toolchain so images built FROM this one
+# ship no compiler and no source tree.
 RUN apk add --no-cache --virtual .build-deps \
         g++ \
         make \
@@ -13,16 +14,23 @@ RUN apk add --no-cache --virtual .build-deps \
         gperf \
         libressl-dev \
         zlib-dev \
-        zlib-static \
-        linux-headers;
+        linux-headers \
+        php \
+ && git init /td \
+ && cd /td \
+ && git remote add origin https://github.com/tdlib/td.git \
+ && git fetch --depth 1 origin 971684a3dcc7bdf99eec024e1c4f57ae729d6d53 \
+ && git checkout FETCH_HEAD \
+ && cmake -B build -S . \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX:PATH=/usr/local \
+ && cmake --build build --target install \
+ && cd / \
+ && rm -rf /td \
+ && ldconfig \
+ && apk del .build-deps \
+ && apk add --no-cache libressl zlib
 
-RUN apk update &&\
-    apk upgrade &&\
-    apk add alpine-sdk linux-headers git zlib-dev gperf php cmake &&\
-    git clone https://github.com/tdlib/td.git &&\
-    cd td &&\
-    rm -rf build &&\
-    mkdir build &&\
-    cd build &&\
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local .. &&\
-    cmake --build . --target install
+# Non-root runtime user (consumers of this image run as this user)
+RUN addgroup -S tdlib && adduser -S tdlib -G tdlib
+USER tdlib
