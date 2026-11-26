@@ -293,6 +293,11 @@ func (m *MockStateManager) SaveState() error {
 }
 
 // StorePost stores a post in the state
+func (m *MockStateManager) GetCrawlOwner(crawlID string) (string, error) {
+	args := m.Called(crawlID)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockStateManager) StorePost(channelID string, post model.Post) error {
 	args := m.Called(channelID, post)
 	return args.Error(0)

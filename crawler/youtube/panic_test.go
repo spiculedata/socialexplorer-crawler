@@ -64,6 +64,7 @@ func (m *MockStateManager) GetLayerByDepth(depth int) ([]state.Page, error)   { 
 func (m *MockStateManager) GetMaxDepth() (int, error)                         { return 0, nil }
 func (m *MockStateManager) SaveState() error                                  { return nil }
 func (m *MockStateManager) ExportPagesToBinding(crawlID string) error         { return nil }
+func (m *MockStateManager) GetCrawlOwner(crawlID string) (string, error) { return "", nil }
 func (m *MockStateManager) StorePost(channelID string, post model.Post) error { return nil }
 func (m *MockStateManager) StoreFile(channelID string, sourceFilePath string, fileName string) (string, string, error) {
 	return "", "", nil

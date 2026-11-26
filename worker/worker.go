@@ -302,6 +302,19 @@ func (w *Worker) determineStatus() string {
 func (w *Worker) ProcessWorkItem(ctx context.Context, item distributed.WorkItem) (*distributed.WorkResult, error) {
 	startTime := time.Now()
 
+	// A work item's crawl ID names the state namespace the crawl writes into;
+	// refuse one that could address another crawl's state instead of
+	// processing a poisoned work item.
+	if item.CrawlID != "" {
+		if err := common.ValidateCrawlID(item.CrawlID); err != nil {
+			log.Error().Err(err).
+				Str("worker_id", w.ID).
+				Str("work_item_id", item.ID).
+				Msg("Refusing work item with invalid crawl ID")
+			return nil, err
+		}
+	}
+
 	log.Info().
 		Str("worker_id", w.ID).
 		Str("work_item_id", item.ID).

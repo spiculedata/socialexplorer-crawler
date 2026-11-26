@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/crawler"
 	"github.com/researchaccelerator-hub/telegram-scraper/model"
 	youtubemodel "github.com/researchaccelerator-hub/telegram-scraper/model/youtube"
@@ -177,6 +178,13 @@ func (c *YouTubeCrawler) ValidateTarget(target crawler.CrawlTarget) error {
 
 	if target.ID == "" {
 		return fmt.Errorf("target ID cannot be empty")
+	}
+
+	// The target ID becomes the channel's storage directory under the crawl;
+	// refuse an identifier that is not a recognizable YouTube channel ID,
+	// "@handle" or plain name, or that could escape that directory.
+	if err := common.ValidateYouTubeChannelID(target.ID); err != nil {
+		return err
 	}
 
 	return nil

@@ -55,6 +55,15 @@ func StartStandaloneMode(urlList []string, urlFile string, crawlerCfg common.Cra
 		log.Fatal().Msg("No URLs provided. Use --urls or --url-file to specify URLs to crawl")
 	}
 
+	// The crawl ID becomes path segments and state keys ("crawlID/metadata",
+	// "crawlID/layer_map", "active_crawl/crawlID", binding file names); refuse
+	// one that could write into another crawl's namespace.
+	if crawlerCfg.CrawlID != "" {
+		if err := common.ValidateCrawlID(crawlerCfg.CrawlID); err != nil {
+			log.Fatal().Err(err).Msg("Invalid crawl ID")
+		}
+	}
+
 	log.Info().Msgf("Starting crawl of %d URLs with concurrency %d", len(urls), crawlerCfg.Concurrency)
 
 	if generateCode {

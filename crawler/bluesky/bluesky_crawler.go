@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/researchaccelerator-hub/telegram-scraper/client"
+	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/crawler"
 	"github.com/researchaccelerator-hub/telegram-scraper/model"
 	blueskymodel "github.com/researchaccelerator-hub/telegram-scraper/model/bluesky"
@@ -89,11 +90,22 @@ func (c *BlueskyCrawler) ValidateTarget(target crawler.CrawlTarget) error {
 		if len(parts) < 3 {
 			return fmt.Errorf("invalid DID format: %s", id)
 		}
+		// The target ID becomes the channel's storage directory under the
+		// crawl; refuse a DID containing path separators or traversal
+		// segments, which DIDs never contain legitimately.
+		if err := common.ValidateChannelName(id); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	// Validate handle format (@username.bsky.social or username.bsky.social)
 	if strings.Contains(id, ".") {
+		// Handles are used as a storage directory too; apply the same
+		// path-safety rules as for DIDs.
+		if err := common.ValidateChannelName(id); err != nil {
+			return err
+		}
 		return nil
 	}
 

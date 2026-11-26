@@ -490,6 +490,15 @@ func getChannelInfoWithDeps(
 	getMemberCountFn MemberCountGetter,
 	cfg common.CrawlerConfig,
 ) (*channelInfo, []*client.Message, error) {
+	// The page URL doubles as the channel's username and as the channel's
+	// storage directory under the crawl; refuse a seed that is not a usable
+	// Telegram username (a URL or a traversal attempt) before any lookup or
+	// storage happens.
+	if err := common.ValidateTelegramChannelName(page.URL); err != nil {
+		log.Error().Err(err).Str("channel", page.URL).Msg("Refusing seed: not a valid Telegram channel name")
+		return nil, nil, err
+	}
+
 	// Search for the channel
 	chat, err := tdlibClient.SearchPublicChat(&client.SearchPublicChatRequest{
 		Username: page.URL,
