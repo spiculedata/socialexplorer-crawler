@@ -399,13 +399,16 @@ func handleJob(ctx context.Context, job *common.JobEvent) error {
 	log.Info().Msg("==================================================================================")
 	log.Info().Msgf("📅 Timestamp: %s", time.Now().Format(time.RFC3339))
 	log.Info().Msgf("🏷️  Job Type: %s", job.JobType)
-	log.Info().Msgf("📄 Raw Job Data: %s", string(job.Data))
+	// NOTE: never log the raw job payload: it carries credentials (e.g. the
+	// YouTube API key) and session archive URLs. Log only its size.
 	log.Info().Msgf("📊 Data Size: %d bytes", len(job.Data))
 
 	log.Info().Msg("🔍 Attempting to parse job data...")
 	var jobData JobData
 	if err := json.Unmarshal(job.Data, &jobData); err != nil {
-		log.Error().Err(err).Str("raw_data", string(job.Data)).Msg("❌ CRITICAL: Failed to unmarshal job payload")
+		// Do not include the raw payload here: it may carry credentials or
+		// session archive URLs.
+		log.Error().Err(err).Msg("❌ CRITICAL: Failed to unmarshal job payload")
 		log.Error().Msg("🔍 This means the job data format is invalid or incompatible")
 		return fmt.Errorf("failed to unmarshal job payload: %v", err)
 	}
@@ -419,7 +422,9 @@ func handleJob(ctx context.Context, job *common.JobEvent) error {
 	log.Info().Msgf("📊 Max Posts: %d", jobData.MaxPosts)
 
 	if jobData.YouTubeAPIKey != "" {
-		log.Info().Msgf("🔑 YouTube API Key: %s...%s", jobData.YouTubeAPIKey[:8], jobData.YouTubeAPIKey[len(jobData.YouTubeAPIKey)-4:])
+		// Never log the key itself or fragments of it: a short prefix plus a
+		// short suffix is often enough to identify or brute-force a key.
+		log.Info().Msgf("🔑 YouTube API key present (%d chars)", len(jobData.YouTubeAPIKey))
 	}
 
 	// Route job execution based on job type (job name), supporting dynamic suffixes
@@ -730,7 +735,9 @@ func executeGenericJob(ctx context.Context, jobData JobData) error {
 		return err
 	}
 
-	log.Info().Msgf("📋 Job details: %+v", jobData)
+	// Log a summary without credentials or archive URLs instead of %+v of the
+	// whole JobData (which includes the YouTube API key and TDLib database URLs).
+	log.Info().Msgf("📋 Job details: jobName=%s task=%s platform=%s urls=%d maxDepth=%d maxPosts=%d", jobData.JobName, jobData.Task, jobData.Platform, len(jobData.URLs), jobData.MaxDepth, jobData.MaxPosts)
 	log.Warn().Msgf("⚠️  No specific handler for job type '%s', executing as generic job", jobData.JobName)
 
 	// For now, just log the job completion

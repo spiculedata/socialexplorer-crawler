@@ -170,7 +170,8 @@ func (c *BlueskyClient) consumeEvents(ctx context.Context) {
 			// Parse JSON event
 			var event blueskymodel.BlueskyEvent
 			if err := json.Unmarshal(message, &event); err != nil {
-				log.Warn().Err(err).Str("message", string(message)).Msg("Failed to parse event JSON")
+				// Do not log the raw message: it contains the post content.
+				log.Warn().Err(err).Int("message_size", len(message)).Msg("Failed to parse event JSON")
 				continue
 			}
 

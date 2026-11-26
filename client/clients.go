@@ -39,9 +39,10 @@ func (t *TelegramClient) Connect(ctx context.Context) error {
 	storageRoot, _ := t.config["storage_root"].(string)
 	verbosityLevel, _ := t.config["tdlib_verbosity"].(int)
 
-	// Log connection parameters
+	// Do not log the database URLs: they are bearer-style links to
+	// logged-in Telegram session archives.
 	log.Info().
-		Strs("tdlib_database_urls", tdlibDatabaseURLs).
+		Int("tdlib_database_url_count", len(tdlibDatabaseURLs)).
 		Str("storage_root", storageRoot).
 		Int("verbosity_level", verbosityLevel).
 		Msg("Telegram connection parameters")

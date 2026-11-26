@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -14,6 +15,24 @@ import (
 	"google.golang.org/api/option"
 	ytapi "google.golang.org/api/youtube/v3"
 )
+
+// apiKeyTransport injects the YouTube API key into the X-Goog-Api-Key request
+// header instead of the key= query parameter, so the key never appears in
+// request URLs (which surface in transport error messages and logs).
+type apiKeyTransport struct {
+	key  string
+	base http.RoundTripper
+}
+
+func (t *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.Header.Set("X-Goog-Api-Key", t.key)
+	transport := t.base
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	return transport.RoundTrip(r)
+}
 
 // BatchConfig holds dynamic batching configuration
 type BatchConfig struct {
@@ -91,7 +110,10 @@ func (c *YouTubeDataClient) Connect(ctx context.Context) error {
 		log.Error().Msg("YouTube API key is empty! This will cause authentication errors")
 	}
 
-	service, err := ytapi.NewService(ctx, option.WithAPIKey(c.apiKey))
+	// Pass the API key via the X-Goog-Api-Key header (see apiKeyTransport) so
+	// it is not embedded in request URLs, which end up in logs and error
+	// messages on transport failures.
+	service, err := ytapi.NewService(ctx, option.WithHTTPClient(&http.Client{Transport: &apiKeyTransport{key: c.apiKey}}))
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create YouTube service")
 		return fmt.Errorf("failed to create YouTube service: %w", err)

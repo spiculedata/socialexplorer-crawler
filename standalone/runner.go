@@ -148,12 +148,12 @@ func generatePCode() {
 
 	log.Printf("TDLib version: %s (commit: %s)", versionOption.(*client.OptionValueString).Value, commitOption.(*client.OptionValueString).Value)
 
-	me, err := tdlibClient.GetMe()
-	if err != nil {
+	// Do not log the account's name: it is a personal identifier.
+	if _, err := tdlibClient.GetMe(); err != nil {
 		log.Fatal().Msgf("GetMe error: %s", err)
 	}
 
-	log.Printf("Me: %s %s", me.FirstName, me.LastName)
+	log.Printf("Me: account details retrieved")
 
 	// Import the Credentials type from telegramhelper
 	// Create the credentials object

@@ -384,7 +384,8 @@ func (t *RealTelegramService) GetMe(tdlibClient crawler.TDLibClient) (*client.Us
 		log.Fatal().Err(err).Msg("Failed to retrieve authenticated user")
 		return nil, err
 	}
-	log.Info().Msgf("Logged in as: %s %s", user.FirstName, user.LastName)
+	// Do not log the account's name: it is a personal identifier.
+	log.Info().Msg("Logged in")
 	return user, nil
 }
 
@@ -401,13 +402,13 @@ func GenCode(service TelegramService, storagePrefix string) {
 		}
 	}()
 
-	user, err := service.GetMe(tdclient)
-	if err != nil {
+	// Do not log the account's name: it is a personal identifier.
+	if _, err := service.GetMe(tdclient); err != nil {
 		log.Fatal().Err(err).Msg("Failed to retrieve user information")
 		return
 	}
 
-	log.Info().Msgf("Authenticated as: %s %s", user.FirstName, user.LastName)
+	log.Info().Msg("Authenticated successfully")
 }
 
 // downloadAndExtractTarball downloads a pre-configured TDLib database archive from a URL
