@@ -25,9 +25,18 @@ import (
 var connectionPool *telegramhelper.ConnectionPool
 var poolMu sync.Mutex
 
+// poolUseCount counts how many jobs currently hold the pool alive. Jobs share
+// one process-global pool; without the reference count, the first job to
+// finish would close the pool out from under the others.
+var poolUseCount int
+
 // InitConnectionPool initializes the global connection pool for TDLib clients.
 // This pool is used to manage and reuse Telegram client connections efficiently,
 // minimizing the overhead of creating new connections for each channel.
+//
+// The pool is shared between overlapping jobs in the same process: every call
+// takes a reference on it, so the pool is only torn down once every caller has
+// matched its InitConnectionPool with a CloseConnectionPool.
 //
 // Parameters:
 //   - maxSize: The maximum number of concurrent connections to maintain
@@ -54,7 +63,10 @@ func InitConnectionPool(maxSize int, storagePrefix string, cfg common.CrawlerCon
 		}
 
 		connectionPool = pool
+		poolUseCount = 1
 		log.Info().Int("maxSize", maxSize).Msg("Initialized connection pool")
+	} else {
+		poolUseCount++
 	}
 }
 
@@ -126,20 +138,27 @@ func ReleaseConnectionToPool(connID string) {
 	}
 }
 
-// CloseConnectionPool gracefully shuts down all connections in the pool and
-// releases associated resources. This should be called during application
-// shutdown or when the pool is no longer needed.
+// CloseConnectionPool releases one reference on the global connection pool.
+// The pool is shut down and released only when the last job that took a
+// reference with InitConnectionPool releases it; earlier callers cannot close
+// the pool out from under jobs that are still running.
 //
-// The function is thread-safe with mutex protection. After calling this function,
+// The function is thread-safe with mutex protection. After the final call,
 // the pool is no longer usable until re-initialized with InitConnectionPool.
 func CloseConnectionPool() {
 	poolMu.Lock()
 	defer poolMu.Unlock()
 
-	if connectionPool != nil {
-		connectionPool.Close()
-		connectionPool = nil
+	if connectionPool == nil {
+		return
 	}
+	if poolUseCount > 1 {
+		poolUseCount--
+		return
+	}
+	connectionPool.Close()
+	connectionPool = nil
+	poolUseCount = 0
 }
 
 // IsConnectionPoolInitialized checks if the global connection pool has been

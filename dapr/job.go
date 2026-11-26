@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	daprc "github.com/dapr/go-sdk/client"
@@ -300,17 +302,68 @@ func deleteJob(ctx context.Context, in *common.InvocationEvent) (out *common.Con
 //	return nil
 //}
 
+// crawlMu serialises crawl jobs. Jobs share process-global state (the global
+// TDLib connection pool in particular), so two overlapping crawls would race
+// on it: one job's cleanup would close the pool out from under another. One
+// crawl runs at a time; anything else waits.
+var crawlMu sync.Mutex
+
+// Operator-set upper bounds for the numeric limits a job payload may set.
+// A job used to be able to request, say, concurrency=1000000 (a multi-gigabyte
+// allocation and that many TDLib clients) or maxPosts=-1 (the entire channel
+// history held in memory). These bounds cap what any job can do; tune them
+// per deployment with the matching CRAWLER_MAX_* environment variables.
+var (
+	maxJobConcurrency = limitFromEnv("CRAWLER_MAX_CONCURRENCY", 16)
+	maxJobMaxDepth    = limitFromEnv("CRAWLER_MAX_DEPTH", 10)
+	maxJobMaxPosts    = limitFromEnv("CRAWLER_MAX_POSTS", 10000)
+	maxJobSampleSize  = limitFromEnv("CRAWLER_MAX_SAMPLE_SIZE", 100000)
+	maxJobMaxPages    = limitFromEnv("CRAWLER_MAX_PAGES", 108000)
+)
+
+// limitFromEnv returns the positive integer named by the environment
+// variable, or def when the variable is unset or not a positive integer.
+func limitFromEnv(name string, def int) int {
+	if raw := os.Getenv(name); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+		log.Warn().Str("variable", name).Str("value", raw).Msg("Ignoring invalid CRAWLER_MAX_* value; using default")
+	}
+	return def
+}
+
+// clampJobLimit clamps a job-supplied numeric limit into [min, max] and logs
+// whenever it has to change the requested value.
+func clampJobLimit(field string, v, min, max int) int {
+	if v < min {
+		log.Warn().Str("field", field).Int("requested", v).Int("applied", min).
+			Msg("Job-supplied limit out of range; clamped to operator bound")
+		return min
+	}
+	if v > max {
+		log.Warn().Str("field", field).Int("requested", v).Int("applied", max).
+			Msg("Job-supplied limit out of range; clamped to operator bound")
+		return max
+	}
+	return v
+}
+
 // mergeConfigWithJobData merges CLI configuration with job data,
-// giving precedence to job data when provided, but falling back to CLI values
+// giving precedence to job data when provided, but falling back to CLI values.
+// Job-supplied numeric limits are clamped to operator-set bounds so a single
+// job can neither exhaust memory nor run an unbounded crawl; values the job
+// leaves unset keep the operator's CLI configuration untouched.
 func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) common2.CrawlerConfig {
 	mergedConfig := baseConfig // Start with CLI configuration
 
-	// Override with job data if provided (non-zero/non-empty values)
+	// Override with job data if provided (non-zero/non-empty values),
+	// clamping every numeric limit into operator bounds
 	if jobData.MaxDepth != 0 {
-		mergedConfig.MaxDepth = jobData.MaxDepth
+		mergedConfig.MaxDepth = clampJobLimit("maxDepth", jobData.MaxDepth, 1, maxJobMaxDepth)
 	}
 	if jobData.Concurrency != 0 {
-		mergedConfig.Concurrency = jobData.Concurrency
+		mergedConfig.Concurrency = clampJobLimit("concurrency", jobData.Concurrency, 1, maxJobConcurrency)
 	}
 	if jobData.CrawlID != "" {
 		mergedConfig.CrawlID = jobData.CrawlID
@@ -328,10 +381,13 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 		mergedConfig.MinChannelVideos = jobData.MinChannelVideos
 	}
 	if jobData.MaxPosts != 0 {
-		mergedConfig.MaxPosts = jobData.MaxPosts
+		// A negative maxPosts used to mean "unlimited": the whole channel
+		// history held in memory. From a job payload it is out of range and
+		// is clamped like any other limit.
+		mergedConfig.MaxPosts = clampJobLimit("maxPosts", jobData.MaxPosts, 1, maxJobMaxPosts)
 	}
 	if jobData.SampleSize != 0 {
-		mergedConfig.SampleSize = jobData.SampleSize
+		mergedConfig.SampleSize = clampJobLimit("sampleSize", jobData.SampleSize, 0, maxJobSampleSize)
 	}
 	if !jobData.MinPostDate.IsZero() {
 		mergedConfig.MinPostDate = jobData.MinPostDate
@@ -346,7 +402,7 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 		mergedConfig.TDLibDatabaseURLs = jobData.TDLibDatabaseURLs
 	}
 	if jobData.MaxPages != 0 {
-		mergedConfig.MaxPages = jobData.MaxPages
+		mergedConfig.MaxPages = clampJobLimit("maxPages", jobData.MaxPages, 1, maxJobMaxPages)
 	}
 
 	log.Debug().
@@ -480,8 +536,14 @@ func extractBaseJobType(jobType string) string {
 	return jobType // Return original if no pattern matches
 }
 
-// executeCrawlJob handles crawling jobs with platform-specific logic
+// executeCrawlJob handles crawling jobs with platform-specific logic.
+// It holds crawlMu for its whole run: jobs share process-global state (the
+// TDLib connection pool), so one crawl at a time keeps a finishing job from
+// closing the pool out from under a concurrent one.
 func executeCrawlJob(ctx context.Context, jobType string, jobData JobData) error {
+	crawlMu.Lock()
+	defer crawlMu.Unlock()
+
 	log.Info().Msg("🚀 STARTING CRAWL JOB EXECUTION")
 	log.Info().Msgf("🏷️  Job Type: %s", jobType)
 	log.Info().Msgf("📅 Start Time: %s", time.Now().Format(time.RFC3339))
@@ -629,6 +691,8 @@ func executeCrawlJob(ctx context.Context, jobType string, jobData JobData) error
 			log.Error().Err(err).Msg("❌ Failed to start file cleaner")
 			return err
 		}
+		// The cleaner goroutine must not outlive this job.
+		defer cleaner.Stop()
 		log.Info().Msg("✅ File cleaner started successfully")
 
 		// Initialize connection pool with an appropriate size
