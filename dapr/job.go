@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/researchaccelerator-hub/telegram-scraper/telegramhelper"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -67,13 +69,16 @@ func StartDaprMode(crawlerCfg common2.CrawlerConfig) {
 	}
 	log.Info().Msg("📦 Application state initialized with base configuration")
 
-	// Create a new Dapr service
+	// Create a new Dapr service on a listener so the gRPC server can be built
+	// with a panic-recovery interceptor: a malformed job must never take the
+	// whole crawler process down.
 	port := fmt.Sprintf(":%d", crawlerCfg.DaprPort)
 	log.Info().Msgf("🌐 Creating DAPR gRPC service on port %s", port)
-	server, err := daprs.NewService(port)
+	lis, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatal().Err(err).Msg("❌ Failed to start DAPR gRPC server")
+		log.Fatal().Err(err).Msgf("❌ Failed to listen on port %s", port)
 	}
+	server := daprs.NewServiceWithListener(lis, grpc.ChainUnaryInterceptor(recoveryUnaryInterceptor))
 	log.Info().Msg("✅ DAPR gRPC service created successfully")
 
 	// Creates handlers for the service
@@ -219,6 +224,10 @@ func getJob(ctx context.Context, in *common.InvocationEvent) (out *common.Conten
 	job, err := app.daprClient.GetJobAlpha1(ctx, string(in.Data))
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to get job. err: %v", err)
+		return nil, fmt.Errorf("failed to get job %q: %w", string(in.Data), err)
+	}
+	if job == nil || job.Data == nil {
+		return nil, fmt.Errorf("job %q not found or has no payload", string(in.Data))
 	}
 
 	out = &common.Content{
@@ -227,7 +236,7 @@ func getJob(ctx context.Context, in *common.InvocationEvent) (out *common.Conten
 		DataTypeURL: in.DataTypeURL,
 	}
 
-	return out, err
+	return out, nil
 }
 
 // deleteJob deletes a job by its name using the provided invocation event.
@@ -384,6 +393,22 @@ type JobData struct {
 	MaxPages          int       `json:"maxPages,omitempty"`          // Maximum pages to process
 }
 
+// validateJobData rejects malformed job payloads before any crawl starts, so a
+// bad job returns an error instead of crashing the worker. It checks that:
+//   - the YouTube API key, when present, is long enough to be usable (and no
+//     key fragment is ever logged)
+//   - the concurrency value, when present, is at least 1 (a negative value
+//     would later panic in make(chan struct{}, maxWorkers))
+func validateJobData(jobData JobData) error {
+	if jobData.YouTubeAPIKey != "" && len(jobData.YouTubeAPIKey) < 8 {
+		return fmt.Errorf("invalid job: YouTube API key is too short (%d characters); it must be at least 8 characters", len(jobData.YouTubeAPIKey))
+	}
+	if jobData.Concurrency < 0 {
+		return fmt.Errorf("invalid job: concurrency must be at least 1, got %d", jobData.Concurrency)
+	}
+	return nil
+}
+
 // handleJob processes a job event by unmarshaling the job data and payload,
 // then initiates the crawling process based on the provided configuration.
 // It returns an error if unmarshaling fails or if the crawling process encounters an error.
@@ -410,6 +435,11 @@ func handleJob(ctx context.Context, job *common.JobEvent) error {
 		return fmt.Errorf("failed to unmarshal job payload: %v", err)
 	}
 
+	if err := validateJobData(jobData); err != nil {
+		log.Error().Err(err).Msg("❌ CRITICAL: Malformed job input rejected")
+		return err
+	}
+
 	log.Info().Msg("✅ Job data parsed successfully!")
 	log.Info().Msgf("🏷️  Job Name: %s", jobData.JobName)
 	log.Info().Msgf("📋 Task: %s", jobData.Task)
@@ -419,7 +449,8 @@ func handleJob(ctx context.Context, job *common.JobEvent) error {
 	log.Info().Msgf("📊 Max Posts: %d", jobData.MaxPosts)
 
 	if jobData.YouTubeAPIKey != "" {
-		log.Info().Msgf("🔑 YouTube API Key: %s...%s", jobData.YouTubeAPIKey[:8], jobData.YouTubeAPIKey[len(jobData.YouTubeAPIKey)-4:])
+		// Never log key fragments: only the fact that a key is present and its length
+		log.Info().Int("key_length", len(jobData.YouTubeAPIKey)).Msg("🔑 YouTube API key present")
 	}
 
 	// Route job execution based on job type (job name), supporting dynamic suffixes
@@ -494,6 +525,14 @@ func executeCrawlJob(ctx context.Context, jobType string, jobData JobData) error
 
 	crawlerCfg := mergeConfigWithJobData(app.baseConfig, jobData)
 	log.Info().Msg("✅ Configuration merge completed")
+
+	// Validate the merged configuration before any crawl work starts: an invalid
+	// concurrency value would otherwise panic later in processLayerInParallel
+	// (make(chan struct{}, negative) is a runtime panic outside any recover).
+	if crawlerCfg.Concurrency < 1 {
+		log.Error().Int("concurrency", crawlerCfg.Concurrency).Msg("❌ CRITICAL: merged concurrency is invalid")
+		return fmt.Errorf("invalid job: concurrency must be at least 1, merged configuration resolves to %d", crawlerCfg.Concurrency)
+	}
 
 	// Step 2: Platform detection and auto-configuration
 	log.Info().Msg("🔍 Step 2: Platform detection and auto-configuration...")
