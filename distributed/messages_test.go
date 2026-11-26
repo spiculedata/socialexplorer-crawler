@@ -9,7 +9,6 @@ import (
 
 func TestNewWorkItem(t *testing.T) {
 	config := WorkItemConfig{
-		StorageRoot: "/tmp/test",
 		Concurrency: 2,
 		Timeout:     30,
 	}
@@ -113,9 +112,7 @@ func TestWorkItemValidation(t *testing.T) {
 				URL:      "https://t.me/testchannel",
 				Platform: "telegram",
 				CrawlID:  "test-crawl",
-				Config: WorkItemConfig{
-					StorageRoot: "/tmp/test",
-				},
+				Config: WorkItemConfig{},
 			},
 			wantErr: false,
 		},

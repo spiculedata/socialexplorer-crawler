@@ -36,13 +36,11 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 				ID:    "page-123",
 			},
 			expectedConfig: distributed.WorkItemConfig{
-				StorageRoot:       "/tmp/youtube-random",
 				Concurrency:       4,
 				Timeout:           60,
 				MaxComments:       25,
 				MaxPosts:          100,
 				SkipMediaDownload: true,
-				YouTubeAPIKey:     "random-api-key",
 				SamplingMethod:    "random",
 				MinChannelVideos:  50,
 			},
@@ -66,12 +64,10 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 				ID:    "seed-page",
 			},
 			expectedConfig: distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/youtube-snowball",
 				Concurrency:      2,
 				Timeout:          45,
 				MaxDepth:         3,
 				CrawlLabel:       "snowball-test",
-				YouTubeAPIKey:    "snowball-key",
 				SamplingMethod:   "snowball",
 				MinChannelVideos: 25,
 			},
@@ -94,7 +90,6 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 				ID:    "telegram-page",
 			},
 			expectedConfig: distributed.WorkItemConfig{
-				StorageRoot:      "/tmp/telegram",
 				Concurrency:      1,
 				Timeout:          30,
 				MinUsers:         100,
@@ -127,7 +122,6 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 				ID:    "complete-page",
 			},
 			expectedConfig: distributed.WorkItemConfig{
-				StorageRoot:       "/tmp/complete",
 				Concurrency:       8,
 				Timeout:           120,
 				MinPostDate:       time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -135,7 +129,6 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 				DateBetweenMin:    time.Date(2023, 3, 1, 0, 0, 0, 0, time.UTC),
 				DateBetweenMax:    time.Date(2023, 9, 1, 0, 0, 0, 0, time.UTC),
 				SampleSize:        1000,
-				YouTubeAPIKey:     "complete-key",
 				CrawlLabel:        "complete-crawl",
 				SkipMediaDownload: false,
 				SamplingMethod:    "random",
@@ -173,9 +166,6 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 			// Verify the configuration fields
 			config := workItem.Config
 
-			if config.StorageRoot != tt.expectedConfig.StorageRoot {
-				t.Errorf("StorageRoot: expected %s, got %s", tt.expectedConfig.StorageRoot, config.StorageRoot)
-			}
 			if config.Concurrency != tt.expectedConfig.Concurrency {
 				t.Errorf("Concurrency: expected %d, got %d", tt.expectedConfig.Concurrency, config.Concurrency)
 			}
@@ -187,9 +177,6 @@ func TestOrchestratorCreateWorkItemSampling(t *testing.T) {
 			}
 			if config.MinChannelVideos != tt.expectedConfig.MinChannelVideos {
 				t.Errorf("MinChannelVideos: expected %d, got %d", tt.expectedConfig.MinChannelVideos, config.MinChannelVideos)
-			}
-			if config.YouTubeAPIKey != tt.expectedConfig.YouTubeAPIKey {
-				t.Errorf("YouTubeAPIKey: expected %s, got %s", tt.expectedConfig.YouTubeAPIKey, config.YouTubeAPIKey)
 			}
 			if config.MaxComments != tt.expectedConfig.MaxComments {
 				t.Errorf("MaxComments: expected %d, got %d", tt.expectedConfig.MaxComments, config.MaxComments)
@@ -235,9 +222,6 @@ func TestOrchestratorCreateWorkItemDefaultSampling(t *testing.T) {
 	}
 	if workItem.Config.MinChannelVideos != 0 {
 		t.Errorf("Expected zero min channel videos, got %d", workItem.Config.MinChannelVideos)
-	}
-	if workItem.Config.YouTubeAPIKey != "" {
-		t.Errorf("Expected empty YouTube API key, got %s", workItem.Config.YouTubeAPIKey)
 	}
 }
 

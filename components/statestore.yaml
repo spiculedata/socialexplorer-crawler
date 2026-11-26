@@ -5,10 +5,22 @@ metadata:
 spec:
   type: state.redis
   version: v1
+  # Redis credentials come from the environment through the local env secret
+  # store (components/secretstore.yaml), never from this file. Set
+  # REDIS_PASSWORD before running; set REDIS_ENABLE_TLS to "true" for a TLS
+  # endpoint.
   metadata:
   - name: redisHost
     value: localhost:6379
   - name: redisPassword
-    value: ""
+    secretKeyRef:
+      name: REDIS_PASSWORD
+      key: REDIS_PASSWORD
   - name: enableTLS
-    value: false
+    secretKeyRef:
+      name: REDIS_ENABLE_TLS
+      key: REDIS_ENABLE_TLS
+  # Only the crawler's own app IDs may read or write crawl state.
+  scopes:
+  - telegram-scraper
+  - distributed-scheduler

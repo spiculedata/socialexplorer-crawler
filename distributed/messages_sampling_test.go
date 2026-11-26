@@ -7,12 +7,10 @@ import (
 
 func TestWorkItemConfigSamplingFields(t *testing.T) {
 	config := WorkItemConfig{
-		StorageRoot:       "/tmp/test",
 		Concurrency:       2,
 		Timeout:           30,
 		SamplingMethod:    "random",
 		MinChannelVideos:  50,
-		YouTubeAPIKey:     "test-key",
 	}
 
 	workItem := NewWorkItem("https://youtube.com/c/test", 1, "parent", "crawl-id", "youtube", config)
@@ -26,14 +24,10 @@ func TestWorkItemConfigSamplingFields(t *testing.T) {
 		t.Errorf("Expected min channel videos 50, got %d", workItem.Config.MinChannelVideos)
 	}
 
-	if workItem.Config.YouTubeAPIKey != "test-key" {
-		t.Errorf("Expected YouTube API key 'test-key', got '%s'", workItem.Config.YouTubeAPIKey)
-	}
 }
 
 func TestWorkItemConfigDefaultSamplingValues(t *testing.T) {
 	config := WorkItemConfig{
-		StorageRoot: "/tmp/test",
 		Concurrency: 1,
 		Timeout:     60,
 		// No sampling fields set - should use zero values
@@ -57,7 +51,6 @@ func TestWorkItemConfigAllSamplingMethods(t *testing.T) {
 	for _, method := range samplingMethods {
 		t.Run("sampling_method_"+method, func(t *testing.T) {
 			config := WorkItemConfig{
-				StorageRoot:      "/tmp/test",
 				SamplingMethod:   method,
 				MinChannelVideos: 25,
 			}
@@ -73,13 +66,11 @@ func TestWorkItemConfigAllSamplingMethods(t *testing.T) {
 
 func TestWorkItemConfigSamplingJSONSerialization(t *testing.T) {
 	config := WorkItemConfig{
-		StorageRoot:       "/tmp/test",
 		Concurrency:       3,
 		Timeout:           45,
 		MinPostDate:       time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
 		SamplingMethod:    "snowball",
 		MinChannelVideos:  100,
-		YouTubeAPIKey:     "secret-key",
 	}
 
 	workItem := NewWorkItem("https://youtube.com/c/example", 2, "parent-123", "crawl-456", "youtube", config)
@@ -96,16 +87,12 @@ func TestWorkItemConfigSamplingJSONSerialization(t *testing.T) {
 		t.Errorf("Expected min channel videos 100, got %d", workItem.Config.MinChannelVideos)
 	}
 	
-	if workItem.Config.YouTubeAPIKey != "secret-key" {
-		t.Errorf("Expected YouTube API key 'secret-key', got '%s'", workItem.Config.YouTubeAPIKey)
-	}
 }
 
 func TestWorkItemConfigCompleteFields(t *testing.T) {
 	// Test that all fields including the new sampling fields are properly handled
 	now := time.Now()
 	config := WorkItemConfig{
-		StorageRoot:       "/tmp/complete-test",
 		Concurrency:       5,
 		Timeout:           120,
 		MinPostDate:       now.AddDate(0, -6, 0), // 6 months ago
@@ -120,7 +107,6 @@ func TestWorkItemConfigCompleteFields(t *testing.T) {
 		MinUsers:          500,
 		CrawlLabel:        "test-crawl",
 		SkipMediaDownload: true,
-		YouTubeAPIKey:     "complete-test-key",
 		SamplingMethod:    "random",
 		MinChannelVideos:  75,
 	}
@@ -130,9 +116,6 @@ func TestWorkItemConfigCompleteFields(t *testing.T) {
 	// Verify that all fields are preserved
 	c := workItem.Config
 	
-	if c.StorageRoot != "/tmp/complete-test" {
-		t.Errorf("StorageRoot mismatch")
-	}
 	if c.Concurrency != 5 {
 		t.Errorf("Concurrency mismatch")
 	}
@@ -141,9 +124,6 @@ func TestWorkItemConfigCompleteFields(t *testing.T) {
 	}
 	if c.MinChannelVideos != 75 {
 		t.Errorf("MinChannelVideos mismatch")
-	}
-	if c.YouTubeAPIKey != "complete-test-key" {
-		t.Errorf("YouTubeAPIKey mismatch")
 	}
 	if c.MaxComments != 50 {
 		t.Errorf("MaxComments mismatch")
