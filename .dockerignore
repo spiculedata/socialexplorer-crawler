@@ -1,0 +1,32 @@
+# Keep credentials, session state and local junk out of the build context.
+.git
+.github
+.gitignore
+.gitattributes
+
+# Build artifacts and test binaries
+bin/
+main
+*.test
+
+# Docs and IDE files
+docs/
+*.md
+*.iml
+
+# Local secrets and crawl session state — must never enter the build context
+credentials.json
+*.session
+*.session.*
+*.tdbin
+.env
+.env.*
+
+# Local TDLib sources if cloned for development
+td/
+
+# Docker files themselves
+Dockerfile
+Dockerfile.tdlib
+docker-compose.yml
+docker-compose.*.yml
