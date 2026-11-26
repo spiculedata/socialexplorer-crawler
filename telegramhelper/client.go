@@ -3,14 +3,18 @@ package telegramhelper
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +23,127 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/zelenin/go-tdlib/client"
 )
+
+const (
+	// downloadTimeout bounds the whole archive download, including redirects.
+	downloadTimeout = 10 * time.Minute
+	// archiveURLAllowedHostsEnv names the operator-configured, comma-separated
+	// allow-list of hosts a TDLib database archive may be fetched from. When
+	// unset, any host is accepted (subject to the SSRF dialer policy below).
+	archiveURLAllowedHostsEnv = "TDLIB_DB_URL_ALLOWED_HOSTS"
+)
+
+// Size caps for downloaded TDLib database archives. They are vars (with safe
+// defaults) so tests can shrink them instead of generating gigabyte archives.
+var (
+	// maxArchiveTotalBytes caps the total uncompressed size of a downloaded
+	// TDLib database archive so a gzip bomb cannot fill the disk.
+	maxArchiveTotalBytes = int64(2 << 30) // 2 GiB
+	// maxArchiveFileBytes caps the uncompressed size of any single archive
+	// entry.
+	maxArchiveFileBytes = int64(512 << 20) // 512 MiB
+)
+
+// downloadHTTPClient is the HTTP client used to download TDLib database
+// archives. It blocks private, loopback, link-local, multicast and unspecified
+// addresses at the dialer (SSRF hardening), enforces timeouts and only follows
+// redirects that pass the same URL policy. Tests may replace it to exercise
+// the happy path against a local httptest server.
+var downloadHTTPClient = newSecureHTTPClient()
+
+// newSecureHTTPClient builds an http.Client whose dialer refuses to connect
+// to internal addresses and which applies a total download timeout.
+func newSecureHTTPClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{
+		Proxy:                 nil, // never route archive fetches through a proxy
+		DialContext:           guardedDialContext(dialer),
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   downloadTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if err := validateArchiveURL(req.URL); err != nil {
+				return fmt.Errorf("refusing redirect to %q: %w", req.URL, err)
+			}
+			return nil
+		},
+	}
+}
+
+// guardedDialContext wraps a dialer so that a connection is only ever made to
+// an address that is not private, loopback, link-local, multicast or
+// unspecified. This blocks SSRF attempts aimed at cloud metadata endpoints,
+// in-cluster services and localhost.
+func guardedDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dial address %q: %w", addr, err)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolving host %q: %w", host, err)
+		}
+		var allowed []net.IP
+		for _, ia := range ips {
+			if isDisallowedIP(ia.IP) {
+				return nil, fmt.Errorf("host %q resolves to disallowed address %s; refusing to connect", host, ia.IP)
+			}
+			allowed = append(allowed, ia.IP)
+		}
+		if len(allowed) == 0 {
+			return nil, fmt.Errorf("host %q has no usable addresses", host)
+		}
+		// Dial the resolved address directly so the policy cannot be bypassed
+		// by a second lookup or a happy-eyeballs fallback.
+		return dialer.DialContext(ctx, network, net.JoinHostPort(allowed[0].String(), port))
+	}
+}
+
+// isDisallowedIP reports whether an address is internal in the SSRF sense:
+// loopback, RFC1918/ULA private, link-local, multicast or unspecified.
+func isDisallowedIP(ip net.IP) bool {
+	return ip == nil ||
+		ip.IsUnspecified() ||
+		ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast()
+}
+
+// validateArchiveURL enforces the URL policy for TDLib database archives:
+// the URL must parse, must use https, and — when the operator configured an
+// allow-list via archiveURLAllowedHostsEnv — its host must be on that list.
+func validateArchiveURL(u *neturl.URL) error {
+	if u == nil {
+		return fmt.Errorf("archive URL is nil")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("archive URL scheme %q is not allowed; only https is accepted", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("archive URL has no host")
+	}
+	allowList := os.Getenv(archiveURLAllowedHostsEnv)
+	if allowList != "" {
+		host := u.Hostname()
+		for _, allowed := range strings.Split(allowList, ",") {
+			if strings.EqualFold(strings.TrimSpace(allowed), host) {
+				return nil
+			}
+		}
+		return fmt.Errorf("archive URL host %q is not in the %s allow-list", host, archiveURLAllowedHostsEnv)
+	}
+	return nil
+}
 
 // TelegramService defines an interface for interacting with the Telegram client.
 // This abstraction allows for both real implementations with TDLib and mock
@@ -431,14 +556,22 @@ func GenCode(service TelegramService, storagePrefix string) {
 // sessions, significantly reducing startup time and avoiding the need for repeated
 // authentication steps. It's especially valuable in distributed or containerized environments.
 func downloadAndExtractTarball(url, targetDir string) error {
-	req, err := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-	req.Header.Set("Accept", "*/*")
+	parsed, err := neturl.Parse(url)
 	if err != nil {
+		return fmt.Errorf("invalid archive URL %q: %w", url, err)
+	}
+	if err := validateArchiveURL(parsed); err != nil {
 		return err
 	}
 
-	client := &http.Client{}
+	req, err := http.NewRequest("GET", parsed.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	req.Header.Set("Accept", "*/*")
+
+	client := downloadHTTPClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -449,8 +582,12 @@ func downloadAndExtractTarball(url, targetDir string) error {
 		return fmt.Errorf("non-200 status returned: %v", resp.Status)
 	}
 
+	// Bound the download itself so an endless or oversized body cannot run
+	// unbounded before the extraction caps kick in.
+	body := io.LimitReader(resp.Body, maxArchiveTotalBytes)
+
 	// Pass the response body to the extraction function
-	return downloadAndExtractTarballFromReader(resp.Body, targetDir)
+	return downloadAndExtractTarballFromReader(body, targetDir)
 }
 
 // downloadAndExtractTarballFromReader extracts files from a gzip-compressed tarball
@@ -487,8 +624,10 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 	}
 	defer gzReader.Close()
 
-	// Step 2: Read the tarball contents
-	tarReader := tar.NewReader(gzReader)
+	// Step 2: Read the tarball contents, counting every uncompressed byte so
+	// the total size cap is enforced across all entries.
+	var totalRead int64
+	tarReader := tar.NewReader(&countingReader{r: gzReader, n: &totalRead})
 
 	// Step 3: Extract files
 	for {
@@ -500,17 +639,24 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 			return err
 		}
 
-		// Determine target file path
-		targetPath := filepath.Join(targetDir, header.Name)
+		// Determine target file path, refusing entries that escape the
+		// extraction directory (path traversal, absolute paths, links).
+		targetPath, err := safeArchivePath(targetDir, header.Name)
+		if err != nil {
+			return err
+		}
+		if totalRead > maxArchiveTotalBytes {
+			return fmt.Errorf("archive exceeds total size cap of %d bytes", maxArchiveTotalBytes)
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			err := os.MkdirAll(targetPath, os.ModePerm)
+			err := os.MkdirAll(targetPath, 0755)
 			if err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			err := os.MkdirAll(filepath.Dir(targetPath), os.ModePerm)
+			err := os.MkdirAll(filepath.Dir(targetPath), 0755)
 			if err != nil {
 				return err
 			}
@@ -518,16 +664,55 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 			if err != nil {
 				return err
 			}
-			defer file.Close()
-
-			_, err = io.Copy(file, tarReader)
+			written, err := io.Copy(file, io.LimitReader(tarReader, maxArchiveFileBytes+1))
+			if closeErr := file.Close(); err == nil {
+				err = closeErr
+			}
+			if err == nil && written > maxArchiveFileBytes {
+				err = fmt.Errorf("archive entry %q exceeds per-file size cap of %d bytes", header.Name, maxArchiveFileBytes)
+			}
 			if err != nil {
+				os.Remove(targetPath) // do not leave a truncated or oversized file behind
 				return err
 			}
 		default:
-			log.Debug().Msgf("Ignoring unknown file type: %s\n", header.Name)
+			log.Debug().Str("name", header.Name).Msg("Ignoring unknown file type in archive")
+		}
+		if totalRead > maxArchiveTotalBytes {
+			return fmt.Errorf("archive exceeds total size cap of %d bytes", maxArchiveTotalBytes)
 		}
 	}
 
 	return nil
+}
+
+// safeArchivePath resolves an archive entry name against the extraction
+// directory and refuses anything that would write outside it: absolute paths,
+// parent-directory traversal and entries that clean to nothing.
+func safeArchivePath(targetDir, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("archive entry has empty name")
+	}
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "\\") {
+		return "", fmt.Errorf("archive entry %q is an absolute path and is refused", name)
+	}
+	cleaned := filepath.Clean(filepath.Join(targetDir, name))
+	rel, err := filepath.Rel(targetDir, cleaned)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry %q escapes the extraction directory and is refused", name)
+	}
+	return cleaned, nil
+}
+
+// countingReader counts every byte that flows through it so the total
+// uncompressed size of an archive can be capped.
+type countingReader struct {
+	r io.Reader
+	n *int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += int64(n)
+	return n, err
 }

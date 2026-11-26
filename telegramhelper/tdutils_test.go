@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
 	"fmt"
 	"github.com/researchaccelerator-hub/telegram-scraper/common"
 	"github.com/researchaccelerator-hub/telegram-scraper/crawler"
@@ -13,10 +14,71 @@ import (
 	"github.com/zelenin/go-tdlib/client"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
+
+// tarEntry describes one entry in a test-built tar.gz archive.
+type tarEntry struct {
+	name string
+	data []byte
+	dir  bool
+}
+
+// buildTarGz builds a gzipped tar archive in memory from the given entries.
+func buildTarGz(t *testing.T, entries []tarEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gzw)
+	for _, e := range entries {
+		h := &tar.Header{Name: e.name, Mode: 0644}
+		if e.dir {
+			h.Typeflag = tar.TypeDir
+			if err := tw.WriteHeader(h); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		h.Typeflag = tar.TypeReg
+		h.Size = int64(len(e.data))
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(e.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// newTestDownloadClient returns an HTTP client suitable for talking to a
+// local httptest TLS server (which uses a self-signed certificate).
+func newTestDownloadClient() *http.Client {
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // test-only client for local httptest servers
+	}
+}
+
+// useTestDownloadClient swaps the hardened download client for one that can
+// reach the local httptest server, restoring the hardened client afterwards.
+func useTestDownloadClient(t *testing.T) {
+	t.Helper()
+	old := downloadHTTPClient
+	downloadHTTPClient = newTestDownloadClient()
+	t.Cleanup(func() { downloadHTTPClient = old })
+}
 
 // Example demonstrates how to use the downloadAndExtractTarball function
 // to download and extract a tarball from a URL to a target directory.
@@ -29,8 +91,8 @@ func Example_downloadAndExtractTarball() {
 	}
 	defer os.RemoveAll(targetDir) // Clean up after the example runs
 
-	// Step 2: Create a mock HTTP server serving a known tarball
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Step 2: Create a mock HTTPS server serving a known tarball
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Create an in-memory tar.gz archive
 		var buf bytes.Buffer
 		gzWriter := gzip.NewWriter(&buf)
@@ -63,6 +125,12 @@ func Example_downloadAndExtractTarball() {
 		w.Write(buf.Bytes())
 	}))
 	defer server.Close()
+
+	// The hardened download client refuses loopback addresses, so swap in a
+	// test client that accepts the local server's self-signed certificate.
+	oldClient := downloadHTTPClient
+	downloadHTTPClient = newTestDownloadClient()
+	defer func() { downloadHTTPClient = oldClient }()
 
 	// Step 3: Call function to download and extract
 	err = downloadAndExtractTarball(server.URL, targetDir)
@@ -151,7 +219,7 @@ func TestDownloadAndExtractTarballFromReader(t *testing.T) {
 
 func TestDownloadAndExtractTarball(t *testing.T) {
 	// Create a test server that serves a mock tarball
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check headers
 		userAgent := r.Header.Get("User-Agent")
 		if userAgent != "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" {
@@ -202,6 +270,7 @@ func TestDownloadAndExtractTarball(t *testing.T) {
 		w.Write(buf.Bytes())
 	}))
 	defer server.Close()
+	useTestDownloadClient(t)
 
 	tempDir, err := os.MkdirTemp("", "tarball-test")
 	if err != nil {
@@ -226,10 +295,11 @@ func TestDownloadAndExtractTarball(t *testing.T) {
 }
 
 func TestDownloadError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
+	useTestDownloadClient(t)
 
 	tempDir, err := os.MkdirTemp("", "tarball-error-test")
 	if err != nil {
@@ -244,12 +314,13 @@ func TestDownloadError(t *testing.T) {
 }
 
 func TestInvalidGzipFormat(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-gzip")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("This is not a valid gzip file"))
 	}))
 	defer server.Close()
+	useTestDownloadClient(t)
 
 	tempDir, err := os.MkdirTemp("", "tarball-invalid-test")
 	if err != nil {
@@ -264,7 +335,7 @@ func TestInvalidGzipFormat(t *testing.T) {
 }
 
 func TestCorruptedTarFile(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
 		gzWriter := gzip.NewWriter(&buf)
 		gzWriter.Write([]byte("Not a valid tar file"))
@@ -275,6 +346,7 @@ func TestCorruptedTarFile(t *testing.T) {
 		w.Write(buf.Bytes())
 	}))
 	defer server.Close()
+	useTestDownloadClient(t)
 
 	tempDir, err := os.MkdirTemp("", "tarball-corrupted-test")
 	if err != nil {
@@ -373,4 +445,156 @@ func ExampleGenCode() {
 	// Output:
 	// MockTelegramService: Simulating client initialization
 	// Authenticated as: Mock User
+}
+
+// serveTarGz starts a local HTTPS test server that always serves the given
+// archive payload.
+func serveTarGz(t *testing.T, payload []byte) *httptest.Server {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-gzip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestExtractRefusesPathTraversal verifies that an archive entry whose name
+// escapes the extraction directory is refused and writes nothing outside it.
+func TestExtractRefusesPathTraversal(t *testing.T) {
+	payload := buildTarGz(t, []tarEntry{{name: "../../evil.txt", data: []byte("pwned")}})
+	tempDir := t.TempDir()
+
+	err := downloadAndExtractTarballFromReader(bytes.NewReader(payload), tempDir)
+	if err == nil {
+		t.Fatal("expected traversal entry to be refused, got nil error")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Errorf("expected escape error, got: %v", err)
+	}
+
+	// The entry would land next to tempDir if extraction were vulnerable.
+	escaped := filepath.Join(filepath.Dir(tempDir), "evil.txt")
+	if _, statErr := os.Stat(escaped); statErr == nil {
+		os.Remove(escaped)
+		t.Errorf("traversal entry was written outside the extraction directory: %s", escaped)
+	}
+}
+
+// TestExtractRefusesAbsolutePath verifies that an archive entry with an
+// absolute path is refused instead of being written at the absolute location.
+func TestExtractRefusesAbsolutePath(t *testing.T) {
+	const marker = "/tmp/tdlib-evil-abs-marker"
+	_ = os.Remove(marker)
+	payload := buildTarGz(t, []tarEntry{{name: marker, data: []byte("pwned")}})
+	defer os.Remove(marker)
+
+	err := downloadAndExtractTarballFromReader(bytes.NewReader(payload), t.TempDir())
+	if err == nil {
+		t.Fatal("expected absolute-path entry to be refused, got nil error")
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Errorf("absolute-path entry was written to %s", marker)
+	}
+}
+
+// TestExtractRefusesOversizedEntry verifies that a single archive entry over
+// the per-file size cap is refused and no truncated file is left behind.
+func TestExtractRefusesOversizedEntry(t *testing.T) {
+	oldCap := maxArchiveFileBytes
+	maxArchiveFileBytes = 64
+	defer func() { maxArchiveFileBytes = oldCap }()
+
+	payload := buildTarGz(t, []tarEntry{{name: "big.bin", data: bytes.Repeat([]byte("a"), 1024)}})
+	tempDir := t.TempDir()
+
+	err := downloadAndExtractTarballFromReader(bytes.NewReader(payload), tempDir)
+	if err == nil {
+		t.Fatal("expected oversized entry to be refused, got nil error")
+	}
+	if _, statErr := os.Stat(filepath.Join(tempDir, "big.bin")); statErr == nil {
+		t.Error("oversized entry was left on disk")
+	}
+}
+
+// TestExtractRefusesTotalOversize verifies that an archive whose total
+// uncompressed size exceeds the cap is refused.
+func TestExtractRefusesTotalOversize(t *testing.T) {
+	oldCap := maxArchiveTotalBytes
+	maxArchiveTotalBytes = 1024
+	defer func() { maxArchiveTotalBytes = oldCap }()
+
+	payload := buildTarGz(t, []tarEntry{
+		{name: "a.bin", data: make([]byte, 800)},
+		{name: "b.bin", data: make([]byte, 800)},
+	})
+
+	err := downloadAndExtractTarballFromReader(bytes.NewReader(payload), t.TempDir())
+	if err == nil {
+		t.Fatal("expected archive over total size cap to be refused, got nil error")
+	}
+}
+
+// TestDownloadRefusesPrivateAddress verifies that a download whose target
+// host resolves to a loopback (or other internal) address is refused by the
+// hardened client's dialer. The hardened client is deliberately NOT swapped
+// out for the test client here.
+func TestDownloadRefusesPrivateAddress(t *testing.T) {
+	server := serveTarGz(t, buildTarGz(t, []tarEntry{{name: "ok.txt", data: []byte("ok")}}))
+
+	err := downloadAndExtractTarball(server.URL, t.TempDir())
+	if err == nil {
+		t.Fatal("expected download from a loopback address to be refused, got nil error")
+	}
+	if !strings.Contains(err.Error(), "disallowed") {
+		t.Errorf("expected SSRF dialer refusal, got: %v", err)
+	}
+}
+
+// TestDownloadRefusesNonHTTPS verifies that a non-https archive URL is
+// refused before any request is made.
+func TestDownloadRefusesNonHTTPS(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request should never reach the server")
+	}))
+	defer server.Close()
+
+	err := downloadAndExtractTarball(server.URL, t.TempDir())
+	if err == nil {
+		t.Fatal("expected non-https URL to be refused, got nil error")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("expected https-only error, got: %v", err)
+	}
+}
+
+// TestValidateArchiveURLAllowList verifies the operator host allow-list.
+func TestValidateArchiveURLAllowList(t *testing.T) {
+	t.Setenv(archiveURLAllowedHostsEnv, "archives.example.com")
+
+	offList, err := neturl.Parse("https://evil.example.com/db.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateArchiveURL(offList); err == nil {
+		t.Error("expected host outside the allow-list to be refused")
+	}
+
+	onList, err := neturl.Parse("https://archives.example.com/db.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateArchiveURL(onList); err != nil {
+		t.Errorf("expected host on the allow-list to be accepted, got: %v", err)
+	}
+
+	httpURL, err := neturl.Parse("https://archives.example.com/db.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpURL.Scheme = "http"
+	if err := validateArchiveURL(httpURL); err == nil {
+		t.Error("expected http scheme to be refused")
+	}
 }

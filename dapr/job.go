@@ -342,9 +342,12 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 	if !jobData.DateBetweenMax.IsZero() {
 		mergedConfig.DateBetweenMax = jobData.DateBetweenMax
 	}
-	if len(jobData.TDLibDatabaseURLs) > 0 {
-		mergedConfig.TDLibDatabaseURLs = jobData.TDLibDatabaseURLs
-	}
+	// Security: tdlibDatabaseUrls is deliberately NOT read from job data.
+	// The archive URL is downloaded and extracted by the crawler and also
+	// supplies the Telegram session credentials, so accepting it from the job
+	// payload would let anyone who can schedule a job plant arbitrary files
+	// (tar path traversal) and run the crawl under an attacker-supplied
+	// session. It must come from operator configuration only.
 	if jobData.MaxPages != 0 {
 		mergedConfig.MaxPages = jobData.MaxPages
 	}
@@ -363,25 +366,28 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 
 // JobData structure includes crawler-specific fields for job configuration
 type JobData struct {
-	DueTime           string    `json:"dueTime"`
-	JobName           string    `json:"jobName"`
-	Task              string    `json:"task"`
-	URLs              []string  `json:"urls,omitempty"`
-	URLFile           string    `json:"urlFile,omitempty"`
-	CrawlID           string    `json:"crawlId,omitempty"`
-	MaxDepth          int       `json:"maxDepth,omitempty"`
-	Concurrency       int       `json:"concurrency,omitempty"`
-	Platform          string    `json:"platform,omitempty"`          // Platform to crawl: "telegram", "youtube", etc.
-	YouTubeAPIKey     string    `json:"youtubeApiKey,omitempty"`     // YouTube API key for YouTube platform
-	SamplingMethod    string    `json:"samplingMethod,omitempty"`    // Sampling method: "random", etc.
-	MinChannelVideos  int64     `json:"minChannelVideos,omitempty"`  // Minimum videos for YouTube channels
-	MaxPosts          int       `json:"maxPosts,omitempty"`          // Maximum posts to fetch
-	SampleSize        int       `json:"sampleSize,omitempty"`        // Sample size for random sampling
-	MinPostDate       time.Time `json:"minPostDate,omitempty"`       // Minimum post date for filtering
-	DateBetweenMin    time.Time `json:"dateBetweenMin,omitempty"`    // Date range minimum
-	DateBetweenMax    time.Time `json:"dateBetweenMax,omitempty"`    // Date range maximum
-	TDLibDatabaseURLs []string  `json:"tdlibDatabaseUrls,omitempty"` // TDLib database URLs for connection pooling
-	MaxPages          int       `json:"maxPages,omitempty"`          // Maximum pages to process
+	DueTime          string    `json:"dueTime"`
+	JobName          string    `json:"jobName"`
+	Task             string    `json:"task"`
+	URLs             []string  `json:"urls,omitempty"`
+	URLFile          string    `json:"urlFile,omitempty"`
+	CrawlID          string    `json:"crawlId,omitempty"`
+	MaxDepth         int       `json:"maxDepth,omitempty"`
+	Concurrency      int       `json:"concurrency,omitempty"`
+	Platform         string    `json:"platform,omitempty"`         // Platform to crawl: "telegram", "youtube", etc.
+	YouTubeAPIKey    string    `json:"youtubeApiKey,omitempty"`    // YouTube API key for YouTube platform
+	SamplingMethod   string    `json:"samplingMethod,omitempty"`   // Sampling method: "random", etc.
+	MinChannelVideos int64     `json:"minChannelVideos,omitempty"` // Minimum videos for YouTube channels
+	MaxPosts         int       `json:"maxPosts,omitempty"`         // Maximum posts to fetch
+	SampleSize       int       `json:"sampleSize,omitempty"`       // Sample size for random sampling
+	MinPostDate      time.Time `json:"minPostDate,omitempty"`      // Minimum post date for filtering
+	DateBetweenMin   time.Time `json:"dateBetweenMin,omitempty"`   // Date range minimum
+	DateBetweenMax   time.Time `json:"dateBetweenMax,omitempty"`   // Date range maximum
+	// Security: tdlibDatabaseUrls is intentionally not a field here. Job
+	// payloads cannot set the TDLib session-archive URLs; those come from
+	// operator configuration (--tdlib-database-urls) only. Unknown JSON keys
+	// in the payload are ignored by encoding/json.
+	MaxPages int `json:"maxPages,omitempty"` // Maximum pages to process
 }
 
 // handleJob processes a job event by unmarshaling the job data and payload,

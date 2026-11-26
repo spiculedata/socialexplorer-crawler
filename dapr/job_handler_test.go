@@ -2,8 +2,10 @@ package dapr
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	common2 "github.com/researchaccelerator-hub/telegram-scraper/common"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestJobHandling tests that job data is properly parsed and validated
@@ -37,6 +39,27 @@ func TestJobHandling(t *testing.T) {
 		assert.Equal(t, jobData.CrawlID, parsedJobData.CrawlID)
 		assert.Equal(t, jobData.MaxDepth, parsedJobData.MaxDepth)
 		assert.Equal(t, jobData.Concurrency, parsedJobData.Concurrency)
+	})
+
+	// Test that a job payload carrying tdlibDatabaseUrls cannot set the TDLib
+	// session-archive URLs. These URLs are downloaded and extracted by the
+	// crawler and also supply the Telegram session credentials, so they must
+	// come from operator configuration only (see security issue #386).
+	t.Run("Job Payload Cannot Set TDLibDatabaseURLs", func(t *testing.T) {
+		payload := []byte(`{"dueTime":"1h","jobName":"telegram-crawl","task":"crawl","urls":["https://t.me/channel1"],"tdlibDatabaseUrls":["https://evil.example.com/db.tgz"]}`)
+
+		var jobData JobData
+		err := json.Unmarshal(payload, &jobData)
+		assert.NoError(t, err, "payload should parse; unknown keys are ignored")
+
+		baseConfig := common2.CrawlerConfig{
+			Platform:          "telegram",
+			TDLibDatabaseURLs: []string{"https://archives.example.com/operator.tgz"},
+		}
+
+		merged := mergeConfigWithJobData(baseConfig, jobData)
+		assert.Equal(t, []string{"https://archives.example.com/operator.tgz"}, merged.TDLibDatabaseURLs,
+			"job payload must not override TDLib database URLs")
 	})
 
 	// Test with URL file instead of direct URLs
