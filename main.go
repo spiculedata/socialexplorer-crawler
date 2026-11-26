@@ -283,19 +283,17 @@ Examples:
 		// If no multiple URLs are provided but the single URL is, add it to the list
 		if len(crawlerCfg.TDLibDatabaseURLs) == 0 && crawlerCfg.TDLibDatabaseURL != "" {
 			crawlerCfg.TDLibDatabaseURLs = append(crawlerCfg.TDLibDatabaseURLs, crawlerCfg.TDLibDatabaseURL)
-			log.Debug().
-				Str("tdlib_database_url", crawlerCfg.TDLibDatabaseURL).
-				Msg("Using single database URL as no multiple URLs provided")
+			// Do not log the database URL itself: it is a bearer-style link to a
+			// logged-in Telegram session archive.
+			log.Debug().Msg("Using single database URL as no multiple URLs provided")
 		}
 
 		if len(crawlerCfg.TDLibDatabaseURLs) > 0 {
+			// Do not log the URLs themselves: they are bearer-style links to
+			// logged-in Telegram session archives.
 			log.Info().
 				Int("url_count", len(crawlerCfg.TDLibDatabaseURLs)).
 				Msg("Configured with multiple TDLib database URLs")
-
-			for i, url := range crawlerCfg.TDLibDatabaseURLs {
-				log.Debug().Int("index", i).Str("url", url).Msg("TDLib database URL")
-			}
 		}
 
 		crawlerCfg.MinUsers = viper.GetInt("crawler.minusers")
@@ -712,7 +710,7 @@ func validateSamplingMethod(platform, samplingMethod string, urlList []string, u
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "debug", "Log level (trace, debug, info, warn, error, fatal, panic)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (trace, debug, info, warn, error, fatal, panic)")
 	rootCmd.PersistentFlags().BoolVar(&crawlerCfg.DaprMode, "dapr", false, "run with DAPR enabled")
 	rootCmd.PersistentFlags().StringVar(&daprMode, "dapr-mode", "job", "DAPR mode to use ('job' or 'standalone')")
 	rootCmd.PersistentFlags().IntVar(&crawlerCfg.DaprPort, "dapr-port", 6481, "DAPR port to use")

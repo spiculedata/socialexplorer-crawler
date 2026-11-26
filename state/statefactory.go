@@ -16,10 +16,13 @@ var NewStateManagerFactory = func() StateManagerFactory {
 // It creates state manager instances based on the provided configuration.
 type DefaultStateManagerFactory struct{}
 
-// Create returns a state manager implementation based on the configuration
+// Create returns a state manager implementation based on the configuration.
+// The configuration itself is never logged: it can carry credentials and
+// session archive URLs.
 func (f *DefaultStateManagerFactory) Create(config Config) (StateManagementInterface, error) {
 	log.Debug().
-		Interface("config", config).
+		Str("crawl_id", config.CrawlID).
+		Str("platform", config.Platform).
 		Msg("Creating new state manager")
 
 	// Check for DAPR configuration

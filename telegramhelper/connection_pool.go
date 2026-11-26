@@ -110,7 +110,9 @@ func (p *ConnectionPool) PreloadConnections(databaseURLs []string) {
 		// Initialize the client with this specific database URL
 		client, err := p.service.InitializeClientWithConfig(p.storagePrefix, connConfig)
 		if err != nil {
-			log.Error().Err(err).Str("databaseURL", databaseURLs[i]).Msg("Failed to initialize client for pool")
+			// Do not log the database URL: it is a bearer-style link to a
+			// logged-in Telegram session archive.
+			log.Error().Err(err).Msg("Failed to initialize client for pool")
 			continue
 		}
 
@@ -134,7 +136,7 @@ func (p *ConnectionPool) PreloadConnections(databaseURLs []string) {
 
 		// Add to available connections
 		p.availableConns[connID] = client
-		log.Info().Str("connectionID", connID).Str("databaseURL", databaseURLs[i]).Msg("Added connection to pool")
+		log.Info().Str("connectionID", connID).Msg("Added connection to pool")
 	}
 
 	log.Info().Int("available", len(p.availableConns)).Int("maxSize", p.maxSize).Msg("Connection pool initialized")
@@ -190,7 +192,9 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (crawler.TDLibClient
 			connConfig = p.defaultConfig
 			connConfig.TDLibDatabaseURL = databaseURL
 
-			log.Info().Str("databaseURL", databaseURL).Msg("Creating new connection with specified database URL")
+			// Do not log the database URL: it is a bearer-style link to a
+			// logged-in Telegram session archive.
+			log.Info().Msg("Creating new connection with specified database URL")
 		} else {
 			// If no specific URLs provided, use the default config
 			connConfig = p.defaultConfig
@@ -382,7 +386,9 @@ func (p *ConnectionPool) HandleConnectionError(ctx context.Context, connID strin
 		connConfig = p.defaultConfig
 		connConfig.TDLibDatabaseURL = databaseURL
 
-		log.Info().Str("databaseURL", databaseURL).Msg("Creating fresh connection after error")
+		// Do not log the database URL: it is a bearer-style link to a
+		// logged-in Telegram session archive.
+		log.Info().Msg("Creating fresh connection after error")
 	} else {
 		connConfig = p.defaultConfig
 		log.Info().Msg("Creating fresh connection with default configuration after error")

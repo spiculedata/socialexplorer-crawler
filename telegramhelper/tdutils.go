@@ -819,7 +819,9 @@ func extractChannelLinksFromMessage(message *client.Message) []string {
 				if matches := channelLinkRegex.FindStringSubmatch(url); len(matches) > 0 {
 					// Extract just the channel name (group 2 from regex)
 					channelName := matches[2]
-					log.Info().Str("url", url).Str("channel_name", channelName).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: adding")
+					// Collected identifiers go to debug, not info: they must not
+					// appear in default (info) log output.
+					log.Debug().Str("url", url).Str("channel_name", channelName).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: adding")
 					channelNamesMap[channelName] = true
 				}
 
@@ -836,11 +838,11 @@ func extractChannelLinksFromMessage(message *client.Message) []string {
 						// 	channelNamesMap[mention[1:]] = true
 						// }
 						channelName := matches[1]
-						log.Info().Str("mention", channelName).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: adding")
+						log.Debug().Str("mention", channelName).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: adding")
 						channelNamesMap[channelName] = true
 					} else {
-						log.Info().Str("mention", mention).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: skipping")
-						log.Info().Str("entity_extra", entity.Extra).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: skipping")
+						log.Debug().Str("mention", mention).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: skipping")
+						log.Debug().Str("entity_extra", entity.Extra).Str("entity_type", "TextEntityTypeMention").Msg("random-walk-links: skipping")
 					}
 				}
 
@@ -853,7 +855,9 @@ func extractChannelLinksFromMessage(message *client.Message) []string {
 					if matches := channelLinkRegex.FindStringSubmatch(url); len(matches) > 0 {
 						// Extract just the channel name (group 2 from regex)
 						channelName := matches[2]
-						log.Info().Str("url", url).Str("channel_name", channelName).Str("entity_type", "TextEntityTypeUrl").Msg("random-walk-links: adding")
+						// Collected identifiers go to debug, not info: they must not
+						// appear in default (info) log output.
+						log.Debug().Str("url", url).Str("channel_name", channelName).Str("entity_type", "TextEntityTypeUrl").Msg("random-walk-links: adding")
 						channelNamesMap[channelName] = true
 					}
 				}
@@ -868,7 +872,9 @@ func extractChannelLinksFromMessage(message *client.Message) []string {
 			if len(match) >= 3 {
 				// Extract just the channel name (group 2 from regex)
 				channelName := match[2]
-				log.Info().Str("channel_name", channelName).Str("entity_type", "messageText.Text.Text").Msg("random-walk-links: adding")
+				// Collected identifiers go to debug, not info: they must not
+				// appear in default (info) log output.
+				log.Debug().Str("channel_name", channelName).Str("entity_type", "messageText.Text.Text").Msg("random-walk-links: adding")
 				channelNamesMap[channelName] = true
 			}
 		}
