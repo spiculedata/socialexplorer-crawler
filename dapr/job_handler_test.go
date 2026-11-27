@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"testing"
+
+	common2 "github.com/researchaccelerator-hub/telegram-scraper/common"
 )
 
 // TestJobHandling tests that job data is properly parsed and validated
@@ -63,4 +65,29 @@ func TestJobHandling(t *testing.T) {
 		// Verify URL file field is preserved
 		assert.Equal(t, jobData.URLFile, parsedJobData.URLFile)
 	})
+}
+// TestMergeConfigWithJobDataIgnoresTDLibDatabaseURLs verifies that a job
+// payload cannot set the TDLib session archive URLs: the archive is downloaded
+// and extracted with the crawler's own privileges and also supplies the
+// Telegram credentials the crawl runs under, so only operator configuration
+// (CLI flags / config file) may provide it.
+func TestMergeConfigWithJobDataIgnoresTDLibDatabaseURLs(t *testing.T) {
+	operatorURLs := []string{"https://operator.example.com/seed.tar.gz"}
+	baseConfig := common2.CrawlerConfig{
+		Platform:          "telegram",
+		TDLibDatabaseURLs: operatorURLs,
+	}
+
+	jobData := JobData{
+		DueTime:           "1h",
+		JobName:           "telegram-crawl",
+		Task:              "crawl",
+		URLs:              []string{"https://t.me/channel1"},
+		TDLibDatabaseURLs: []string{"https://attacker.example.com/seed.tar.gz"},
+	}
+
+	merged := mergeConfigWithJobData(baseConfig, jobData)
+
+	assert.Equal(t, operatorURLs, merged.TDLibDatabaseURLs,
+		"job payload must not override TDLibDatabaseURLs")
 }
