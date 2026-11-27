@@ -3,14 +3,18 @@ package telegramhelper
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -430,16 +434,26 @@ func GenCode(service TelegramService, storagePrefix string) {
 // This approach allows for rapid deployment of new crawler instances with pre-authenticated
 // sessions, significantly reducing startup time and avoiding the need for repeated
 // authentication steps. It's especially valuable in distributed or containerized environments.
-func downloadAndExtractTarball(url, targetDir string) error {
-	req, err := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-	req.Header.Set("Accept", "*/*")
+func downloadAndExtractTarball(rawURL, targetDir string) error {
+	u, err := validateArchiveURL(rawURL)
 	if err != nil {
 		return err
 	}
+	return fetchAndExtract(archiveHTTPClient, u.String(), targetDir)
+}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+// fetchAndExtract performs the GET, checks the status code and extracts the
+// archive into targetDir. It is separated from downloadAndExtractTarball so
+// tests can inject their own HTTP client.
+func fetchAndExtract(archiveClient *http.Client, archiveURL, targetDir string) error {
+	req, err := http.NewRequest("GET", archiveURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := archiveClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -490,7 +504,9 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 	// Step 2: Read the tarball contents
 	tarReader := tar.NewReader(gzReader)
 
-	// Step 3: Extract files
+	// Step 3: Extract files, capping per-file and total decompressed bytes so an
+	// endless gzip stream cannot fill the disk or hang the job forever.
+	var totalBytes int64
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -500,17 +516,21 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 			return err
 		}
 
-		// Determine target file path
-		targetPath := filepath.Join(targetDir, header.Name)
+		// Determine target file path, refusing entries that escape the target
+		// directory (absolute paths and any form of "..").
+		targetPath, err := safeArchivePath(targetDir, header.Name)
+		if err != nil {
+			return err
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			err := os.MkdirAll(targetPath, os.ModePerm)
+			err := os.MkdirAll(targetPath, 0755)
 			if err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			err := os.MkdirAll(filepath.Dir(targetPath), os.ModePerm)
+			err := os.MkdirAll(filepath.Dir(targetPath), 0755)
 			if err != nil {
 				return err
 			}
@@ -518,11 +538,20 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 			if err != nil {
 				return err
 			}
-			defer file.Close()
-
-			_, err = io.Copy(file, tarReader)
-			if err != nil {
-				return err
+			n, copyErr := io.Copy(file, io.LimitReader(tarReader, maxArchiveFileBytes+1))
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if n > maxArchiveFileBytes {
+				return fmt.Errorf("archive entry %q exceeds the per-file size limit (%d bytes)", header.Name, maxArchiveFileBytes)
+			}
+			totalBytes += n
+			if totalBytes > maxArchiveTotalBytes {
+				return fmt.Errorf("archive exceeds the total size limit (%d bytes)", maxArchiveTotalBytes)
 			}
 		default:
 			log.Debug().Msgf("Ignoring unknown file type: %s\n", header.Name)
@@ -530,4 +559,130 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 	}
 
 	return nil
+}
+
+// safeArchivePath joins an archive entry name onto targetDir, refusing absolute
+// paths, backslash-separated paths and any ".." traversal so the cleaned result
+// is always guaranteed to stay under targetDir.
+func safeArchivePath(targetDir, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("archive entry has an empty name")
+	}
+	if filepath.IsAbs(name) || strings.Contains(name, "\x00") || strings.ContainsRune(name, '\\') {
+		return "", fmt.Errorf("archive entry %q is not a safe relative path", name)
+	}
+	cleanName := filepath.Clean(name)
+	if cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry %q escapes the target directory", name)
+	}
+	joined := filepath.Join(targetDir, cleanName)
+	// Belt and braces: verify the cleaned target really stays under targetDir.
+	rel, err := filepath.Rel(filepath.Clean(targetDir), joined)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry %q resolves outside the target directory", name)
+	}
+	return joined, nil
+}
+
+// validateArchiveURL checks that a TDLib session archive URL is safe to fetch:
+// it must parse, it must be https, and its host must be in the operator's
+// allow-list when one is configured (TDLIB_ARCHIVE_ALLOWED_HOSTS).
+func validateArchiveURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, fmt.Errorf("invalid TDLib archive URL %q: %w", rawURL, err)
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("TDLib archive URL must use https, got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("TDLib archive URL has no host")
+	}
+	if len(archiveHostAllowlist) > 0 && !archiveHostAllowlist[host] {
+		return nil, fmt.Errorf("TDLib archive host %q is not in the configured allow-list", host)
+	}
+	return u, nil
+}
+
+// archiveHostAllowlist is parsed from the operator's TDLIB_ARCHIVE_ALLOWED_HOSTS
+// environment variable (comma-separated). When empty, any public https host is
+// accepted; the dialer below still refuses private, loopback and link-local
+// addresses regardless.
+var archiveHostAllowlist = parseArchiveAllowlist(os.Getenv("TDLIB_ARCHIVE_ALLOWED_HOSTS"))
+
+func parseArchiveAllowlist(value string) map[string]bool {
+	allow := make(map[string]bool)
+	for _, host := range strings.Split(value, ",") {
+		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+			allow[host] = true
+		}
+	}
+	return allow
+}
+
+// Size limits for archive extraction: an attacker-controlled (or accidentally
+// endless) gzip stream must not fill the disk or hang the job.
+var (
+	maxArchiveFileBytes  int64 = 1 << 30 // 1 GiB per file
+	maxArchiveTotalBytes int64 = 4 << 30 // 4 GiB in total
+)
+
+// archiveHTTPClient downloads session archives with a hard timeout and a dialer
+// that refuses private, loopback, link-local and multicast addresses, so an
+// archive URL cannot be used to reach cloud metadata or in-cluster services.
+var archiveHTTPClient = &http.Client{
+	Timeout: 10 * time.Minute,
+	Transport: &http.Transport{
+		DialContext: safeDialContext,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects fetching TDLib archive")
+		}
+		if _, err := validateArchiveURL(req.URL.String()); err != nil {
+			return err
+		}
+		return nil
+	},
+}
+
+// safeDialContext resolves the host, skips blocked addresses and dials only a
+// public one.
+func safeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid dial address %q: %w", address, err)
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve TDLib archive host %q: %w", host, err)
+	}
+	var dialer net.Dialer
+	var lastErr error
+	allowedAny := false
+	for _, ip := range ips {
+		if !isAllowedArchiveAddr(ip.IP) {
+			lastErr = fmt.Errorf("refusing to dial blocked address %s for TDLib archive host %q", ip.IP, host)
+			continue
+		}
+		allowedAny = true
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if !allowedAny && lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no allowed address for TDLib archive host %q", host)
+}
+
+// isAllowedArchiveAddr reports whether ip is safe to dial when fetching a
+// session archive: everything private, loopback, link-local, multicast or
+// unspecified is refused (SSRF to cloud metadata and in-cluster services).
+func isAllowedArchiveAddr(ip net.IP) bool {
+	return !(ip == nil || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast())
 }
