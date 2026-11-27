@@ -244,8 +244,8 @@ func (s *RealTelegramService) InitializeClientWithConfig(storagePrefix string, c
 
 	if cfg.TDLibDatabaseURL != "" {
 
-		// Ensure the directory exists
-		err := os.MkdirAll(uniquePath, 0755)
+		// Ensure the directory exists (owner-only: it will hold the session database)
+		err := os.MkdirAll(uniquePath, sessionDirPerm)
 		if err != nil {
 			log.Warn().Err(err).Msgf("Failed to create unique directory %s for database", uniquePath)
 		}
@@ -297,22 +297,13 @@ func (s *RealTelegramService) InitializeClientWithConfig(storagePrefix string, c
 		}
 	}
 
-	// Determine database and files directory paths
-	var dbDir, filesDir string
-
-	if uniqueSubfolder != "" {
-		// Use the unique subfolder path if we created one
-		dbDir = filepath.Join(storagePrefix, "state", uniqueSubfolder, ".tdlib", "database")
-		filesDir = filepath.Join(storagePrefix, "state", uniqueSubfolder, ".tdlib", "files")
-	} else {
-		// Use default paths
-		dbDir = filepath.Join(storagePrefix, "state", ".tdlib", "database")
-		filesDir = filepath.Join(storagePrefix, "state", ".tdlib", "files")
+	// Determine database and files directory paths and create them with
+	// owner-only permissions: they hold the Telegram session database, which
+	// must not be readable by other users on the host.
+	dbDir, filesDir, err := prepareSessionDirs(storagePrefix, uniqueSubfolder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare TDLib session directories: %w", err)
 	}
-
-	// Ensure directories exist
-	os.MkdirAll(dbDir, 0755)
-	os.MkdirAll(filesDir, 0755)
 
 	log.Info().Msgf("Using TDLib database directory: %s", dbDir)
 
@@ -410,6 +401,45 @@ func GenCode(service TelegramService, storagePrefix string) {
 	log.Info().Msgf("Authenticated as: %s %s", user.FirstName, user.LastName)
 }
 
+// Permission modes for session and collected-data storage. Directories are
+// 0700 and files 0600 so that other users on a shared host (or other
+// containers sharing the volume) cannot read the Telegram session database,
+// the stored credentials or the collected data.
+const (
+	sessionDirPerm  = 0o700
+	sessionFilePerm = 0o600
+)
+
+// prepareSessionDirs computes the TDLib database and files directories under
+// the storage prefix and creates them with owner-only (0700) permissions.
+//
+// Parameters:
+//   - storagePrefix: Base directory for storing TDLib database and files
+//   - uniqueSubfolder: Per-connection subfolder under <storagePrefix>/state;
+//     when empty, the default (non-unique) paths are used
+//
+// Returns the database and files directory paths, or an error if either
+// directory cannot be created.
+func prepareSessionDirs(storagePrefix, uniqueSubfolder string) (dbDir, filesDir string, err error) {
+	if uniqueSubfolder != "" {
+		// Use the unique subfolder path if we created one
+		dbDir = filepath.Join(storagePrefix, "state", uniqueSubfolder, ".tdlib", "database")
+		filesDir = filepath.Join(storagePrefix, "state", uniqueSubfolder, ".tdlib", "files")
+	} else {
+		// Use default paths
+		dbDir = filepath.Join(storagePrefix, "state", ".tdlib", "database")
+		filesDir = filepath.Join(storagePrefix, "state", ".tdlib", "files")
+	}
+
+	if err := os.MkdirAll(dbDir, sessionDirPerm); err != nil {
+		return "", "", fmt.Errorf("failed to create TDLib database directory %s: %w", dbDir, err)
+	}
+	if err := os.MkdirAll(filesDir, sessionDirPerm); err != nil {
+		return "", "", fmt.Errorf("failed to create TDLib files directory %s: %w", filesDir, err)
+	}
+	return dbDir, filesDir, nil
+}
+
 // downloadAndExtractTarball downloads a pre-configured TDLib database archive from a URL
 // and extracts it to the specified target directory. This is a key feature for performance
 // optimization, allowing the application to start with a pre-authenticated TDLib session
@@ -505,16 +535,18 @@ func downloadAndExtractTarballFromReader(reader io.Reader, targetDir string) err
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			err := os.MkdirAll(targetPath, os.ModePerm)
+			err := os.MkdirAll(targetPath, sessionDirPerm)
 			if err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			err := os.MkdirAll(filepath.Dir(targetPath), os.ModePerm)
+			err := os.MkdirAll(filepath.Dir(targetPath), sessionDirPerm)
 			if err != nil {
 				return err
 			}
-			file, err := os.Create(targetPath)
+			// Owner-only permissions: the archive may contain a
+			// pre-authenticated TDLib session database.
+			file, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, sessionFilePerm)
 			if err != nil {
 				return err
 			}
