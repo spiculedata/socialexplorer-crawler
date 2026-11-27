@@ -34,8 +34,9 @@ echo "Starting Delve debugger..."
 # NOTE: keep test inputs local to your machine or on https endpoints.
 # Never point --url-file-url / --tdlib-database-urls at plain-http hosts: a
 # plain-http URL is neither authenticated nor encrypted and leaks whatever is
-# behind it to anyone on the path. See README "YouTube API Key" and
-# "Telegram Authentication" for the supported ways to supply credentials.
+# behind it to anyone on the path. See README "Required for YouTube API",
+# "Required for Telegram API" and "Authentication Flow" for the supported
+# ways to supply credentials.
 # For YouTube testing:
 dlv exec ./bin/app --headless --listen=:2345 --api-version=2 --accept-multiclient -- --dapr --dapr-port 6481 --dapr-mode standalone --urls "UC3MvNfKIhwubtPr2LMOFSZA" --crawl-id testyt101 --concurrency 2 --min-post-date 2024-01-01 --max-depth 1 --platform youtube --youtube-api-key "${YOUTUBE_API_KEY:?set YOUTUBE_API_KEY in your environment}" --url-file-url "${URL_FILE_URL:?set URL_FILE_URL in your environment (https or local file)}" &
 
