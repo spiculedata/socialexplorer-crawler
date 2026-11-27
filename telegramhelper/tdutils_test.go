@@ -18,71 +18,19 @@ import (
 	"testing"
 )
 
-// Example demonstrates how to use the downloadAndExtractTarball function
-// to download and extract a tarball from a URL to a target directory.
+// Example demonstrates that downloadAndExtractTarball refuses insecure URLs:
+// pre-seeded TDLib session archives must come from an https host, and when an
+// operator allow-list (TDLIB_ARCHIVE_ALLOWED_HOSTS) is configured, from a host
+// on that list.
 func Example_downloadAndExtractTarball() {
-	// Step 1: Create a temporary directory for extraction
-	targetDir, err := os.MkdirTemp("", "example-extract")
+	// A plain http URL is refused before any request is made.
+	err := downloadAndExtractTarball("http://insecure.example.com/tdlib.tar.gz", os.TempDir())
 	if err != nil {
-		fmt.Printf("Failed to create temp dir: %v\n", err)
-		return
+		fmt.Printf("Refused: %v\n", err)
 	}
-	defer os.RemoveAll(targetDir) // Clean up after the example runs
-
-	// Step 2: Create a mock HTTP server serving a known tarball
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Create an in-memory tar.gz archive
-		var buf bytes.Buffer
-		gzWriter := gzip.NewWriter(&buf)
-		tarWriter := tar.NewWriter(gzWriter)
-
-		// Add a test file
-		fileContent := []byte("test content")
-		fileHeader := &tar.Header{
-			Name:     "testfile.txt",
-			Mode:     0644,
-			Size:     int64(len(fileContent)),
-			Typeflag: tar.TypeReg,
-		}
-		if err := tarWriter.WriteHeader(fileHeader); err != nil {
-			fmt.Printf("Failed to write tar header: %v\n", err)
-			return
-		}
-		if _, err := tarWriter.Write(fileContent); err != nil {
-			fmt.Printf("Failed to write file content: %v\n", err)
-			return
-		}
-
-		// Close tar and gzip writers
-		tarWriter.Close()
-		gzWriter.Close()
-
-		// Write tar.gz content to response
-		w.Header().Set("Content-Type", "application/x-gzip")
-		w.WriteHeader(http.StatusOK)
-		w.Write(buf.Bytes())
-	}))
-	defer server.Close()
-
-	// Step 3: Call function to download and extract
-	err = downloadAndExtractTarball(server.URL, targetDir)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	// Step 4: Verify extracted file exists
-	extractedFilePath := filepath.Join(targetDir, "testfile.txt")
-	_, err = os.Stat(extractedFilePath)
-	if os.IsNotExist(err) {
-		fmt.Printf("Error: Expected file not found at %s\n", extractedFilePath)
-		return
-	}
-
-	fmt.Println("Successfully downloaded and extracted tarball")
 
 	// Output:
-	// Successfully downloaded and extracted tarball
+	// Refused: TDLib archive URL must use https, got "http"
 }
 
 func TestDownloadAndExtractTarballFromReader(t *testing.T) {
@@ -150,8 +98,8 @@ func TestDownloadAndExtractTarballFromReader(t *testing.T) {
 }
 
 func TestDownloadAndExtractTarball(t *testing.T) {
-	// Create a test server that serves a mock tarball
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Use a TLS test server: session archives must be served over https.
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check headers
 		userAgent := r.Header.Get("User-Agent")
 		if userAgent != "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" {
@@ -203,15 +151,20 @@ func TestDownloadAndExtractTarball(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// Production downloadAndExtractTarball validates the URL (https only) and
+	// refuses loopback dials, so the fetch-path tests exercise fetchAndExtract
+	// with a client that trusts the test server's self-signed certificate.
+	testClient := server.Client()
+
 	tempDir, err := os.MkdirTemp("", "tarball-test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	err = downloadAndExtractTarball(server.URL, tempDir)
+	err = fetchAndExtract(testClient, server.URL, tempDir)
 	if err != nil {
-		t.Fatalf("downloadAndExtractTarball failed: %v", err)
+		t.Fatalf("fetchAndExtract failed: %v", err)
 	}
 
 	extractedFilePath := filepath.Join(tempDir, "testdir/testfile.txt")
@@ -226,10 +179,11 @@ func TestDownloadAndExtractTarball(t *testing.T) {
 }
 
 func TestDownloadError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
+	testClient := server.Client()
 
 	tempDir, err := os.MkdirTemp("", "tarball-error-test")
 	if err != nil {
@@ -237,19 +191,20 @@ func TestDownloadError(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	err = downloadAndExtractTarball(server.URL, tempDir)
+	err = fetchAndExtract(testClient, server.URL, tempDir)
 	if err == nil {
 		t.Error("Expected error for 404 response, got nil")
 	}
 }
 
 func TestInvalidGzipFormat(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-gzip")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("This is not a valid gzip file"))
 	}))
 	defer server.Close()
+	testClient := server.Client()
 
 	tempDir, err := os.MkdirTemp("", "tarball-invalid-test")
 	if err != nil {
@@ -257,14 +212,14 @@ func TestInvalidGzipFormat(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	err = downloadAndExtractTarball(server.URL, tempDir)
+	err = fetchAndExtract(testClient, server.URL, tempDir)
 	if err == nil {
 		t.Error("Expected error for invalid gzip data, got nil")
 	}
 }
 
 func TestCorruptedTarFile(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
 		gzWriter := gzip.NewWriter(&buf)
 		gzWriter.Write([]byte("Not a valid tar file"))
@@ -275,6 +230,7 @@ func TestCorruptedTarFile(t *testing.T) {
 		w.Write(buf.Bytes())
 	}))
 	defer server.Close()
+	testClient := server.Client()
 
 	tempDir, err := os.MkdirTemp("", "tarball-corrupted-test")
 	if err != nil {
@@ -282,7 +238,7 @@ func TestCorruptedTarFile(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	err = downloadAndExtractTarball(server.URL, tempDir)
+	err = fetchAndExtract(testClient, server.URL, tempDir)
 	if err == nil {
 		t.Error("Expected error for corrupted tar data, got nil")
 	}

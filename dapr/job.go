@@ -342,8 +342,15 @@ func mergeConfigWithJobData(baseConfig common2.CrawlerConfig, jobData JobData) c
 	if !jobData.DateBetweenMax.IsZero() {
 		mergedConfig.DateBetweenMax = jobData.DateBetweenMax
 	}
+	// TDLibDatabaseURLs is deliberately NOT accepted from job data. The session
+	// archive is downloaded and extracted with the crawler's own privileges and it
+	// also supplies the Telegram credentials the crawl runs under, so it must come
+	// from operator configuration (CLI flags / config file) only. Log it if a job
+	// payload tries to smuggle one in.
 	if len(jobData.TDLibDatabaseURLs) > 0 {
-		mergedConfig.TDLibDatabaseURLs = jobData.TDLibDatabaseURLs
+		log.Warn().
+			Strs("requested_urls", jobData.TDLibDatabaseURLs).
+			Msg("Job payload supplied tdlibDatabaseUrls; ignoring them for security (session archives come from operator configuration only)")
 	}
 	if jobData.MaxPages != 0 {
 		mergedConfig.MaxPages = jobData.MaxPages
@@ -380,7 +387,7 @@ type JobData struct {
 	MinPostDate       time.Time `json:"minPostDate,omitempty"`       // Minimum post date for filtering
 	DateBetweenMin    time.Time `json:"dateBetweenMin,omitempty"`    // Date range minimum
 	DateBetweenMax    time.Time `json:"dateBetweenMax,omitempty"`    // Date range maximum
-	TDLibDatabaseURLs []string  `json:"tdlibDatabaseUrls,omitempty"` // TDLib database URLs for connection pooling
+	TDLibDatabaseURLs []string  `json:"tdlibDatabaseUrls,omitempty"` // parsed for compatibility but IGNORED for security: session archives come from operator configuration only
 	MaxPages          int       `json:"maxPages,omitempty"`          // Maximum pages to process
 }
 
