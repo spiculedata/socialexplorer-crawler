@@ -21,6 +21,16 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=1 go build -o main .
 
+# Run as a non-root user. The crawler writes TDLib state and crawl output under
+# /tmp/crawl (the default --storage-root) and /app/state, so both are owned by
+# the runtime user.
+RUN addgroup -S crawler \
+    && adduser -S -G crawler \
+    && mkdir -p /tmp/crawl /app/state \
+    && chown -R crawler:crawler /app /tmp/crawl
+
+USER crawler
+
 # # Stage 2: Minimal runtime image
 # FROM acrnetcus.azurecr.io/tdlib:latest
 
